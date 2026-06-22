@@ -167,8 +167,8 @@ kubectl port-forward svc/notifications-api -n fcg 5004:80
 ## Links
 
 - **Documentacao (Event Storming):** https://miro.com/app/board/uXjVHfBBYHk=/
-- **users-api repo:** `<users-api repo>` *(preencher após split)*
-- **catalog-api repo:** `<catalog-api repo>` *(preencher após split)*
-- **payments-api repo:** `<payments-api repo>` *(preencher após split)*
-- **notifications-api repo:** `<notifications-api repo>` *(preencher após split)*
-- **orchestration repo:** `<orchestration repo>` *(preencher após split)*
+- **users-api repo:** https://github.com/YuriLucka/fcg-users-api
+- **catalog-api repo:** https://github.com/YuriLucka/fcg-catalog-api
+- **payments-api repo:** https://github.com/YuriLucka/fcg-payments-api
+- **notifications-api repo:** https://github.com/YuriLucka/fcg-notifications-api
+- **orchestration repo:** https://github.com/YuriLucka/fcg-orchestration
