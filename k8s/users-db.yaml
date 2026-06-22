@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: users-db-secret
+  namespace: fcg
+type: Opaque
+stringData:
+  MSSQL_SA_PASSWORD: "Your_strong_Pass1"
+  ACCEPT_EULA: "Y"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-db
+  namespace: fcg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users-db
+  template:
+    metadata:
+      labels:
+        app: users-db
+    spec:
+      containers:
+        - name: users-db
+          image: mcr.microsoft.com/mssql/server:2022-latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1433
+          envFrom:
+            - secretRef:
+                name: users-db-secret
+          volumeMounts:
+            - name: data
+              mountPath: /var/opt/mssql
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-db
+  namespace: fcg
+spec:
+  selector:
+    app: users-db
+  ports:
+    - port: 1433
+      targetPort: 1433

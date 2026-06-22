@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-config
+  namespace: fcg
+data:
+  RabbitMq__Host: "rabbitmq"

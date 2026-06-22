@@ -1,0 +1,75 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  users-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Your_strong_Pass1"
+    ports: ["1401:1433"]
+
+  catalog-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Your_strong_Pass1"
+    ports: ["1402:1433"]
+
+  users-api:
+    build:
+      context: ../fcg-users-api
+      dockerfile: Dockerfile
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      users-db: { condition: service_started }
+    environment:
+      RabbitMq__Host: rabbitmq
+      ConnectionStrings__DefaultConnection: "Server=users-db;Database=users;User Id=sa;Password=Your_strong_Pass1;TrustServerCertificate=true"
+      JwtSettings__SecretKey: "fcg-fase2-shared-secret-key-please-change-32+chars"
+      JwtSettings__Issuer: "FiapCloudGames"
+      JwtSettings__Audience: "FiapCloudGames.Client"
+      ASPNETCORE_ENVIRONMENT: Development
+    ports: ["5001:8080"]
+
+  catalog-api:
+    build:
+      context: ../fcg-catalog-api
+      dockerfile: Dockerfile
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      catalog-db: { condition: service_started }
+    environment:
+      RabbitMq__Host: rabbitmq
+      ConnectionStrings__DefaultConnection: "Server=catalog-db;Database=catalog;User Id=sa;Password=Your_strong_Pass1;TrustServerCertificate=true"
+      JwtSettings__SecretKey: "fcg-fase2-shared-secret-key-please-change-32+chars"
+      JwtSettings__Issuer: "FiapCloudGames"
+      JwtSettings__Audience: "FiapCloudGames.Client"
+      ASPNETCORE_ENVIRONMENT: Development
+    ports: ["5002:8080"]
+
+  payments-api:
+    build:
+      context: ../fcg-payments-api
+      dockerfile: Dockerfile
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      RabbitMq__Host: rabbitmq
+    ports: ["5003:8080"]
+
+  notifications-api:
+    build:
+      context: ../fcg-notifications-api
+      dockerfile: Dockerfile
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    environment:
+      RabbitMq__Host: rabbitmq
+    ports: ["5004:8080"]
