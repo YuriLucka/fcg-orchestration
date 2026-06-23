@@ -1,6 +1,7 @@
 services:
   rabbitmq:
     image: rabbitmq:3-management
+    user: "0"
     environment:
       RABBITMQ_ERLANG_COOKIE: "fcg-secret-cookie"
     ports: ["5672:5672", "15672:15672"]
