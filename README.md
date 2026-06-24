@@ -54,13 +54,39 @@ Cliente → POST /api/auth/login (users-api) → recebe JWT
 
 ---
 
+## Pré-requisito: clonar os 5 repositórios lado a lado
+
+O `docker-compose.yml` referencia cada serviço por caminho relativo (`../fcg-users-api`, etc.).
+Clone os cinco repositórios no **mesmo diretório pai**:
+
+```bash
+git clone https://github.com/YuriLucka/fcg-users-api.git
+git clone https://github.com/YuriLucka/fcg-catalog-api.git
+git clone https://github.com/YuriLucka/fcg-payments-api.git
+git clone https://github.com/YuriLucka/fcg-notifications-api.git
+git clone https://github.com/YuriLucka/fcg-orchestration.git
+```
+
+Estrutura esperada:
+
+```
+.
+├── fcg-users-api/
+├── fcg-catalog-api/
+├── fcg-payments-api/
+├── fcg-notifications-api/
+└── fcg-orchestration/   ← rode os comandos a partir daqui
+```
+
+---
+
 ## Como rodar com Docker Compose
 
 **Pré-requisitos:** Docker Desktop (ou Docker Engine + Compose v2).
 
 ```bash
-# A partir da raiz do repositório
-docker compose -f orchestration/docker-compose.yml up --build
+# A partir da raiz do repositório fcg-orchestration
+docker compose up --build
 ```
 
 Aguarde todos os containers ficarem `healthy`/`running`. Acesse:
@@ -76,7 +102,7 @@ Aguarde todos os containers ficarem `healthy`/`running`. Acesse:
 Para parar e remover:
 
 ```bash
-docker compose -f orchestration/docker-compose.yml down -v
+docker compose down -v
 ```
 
 ---
@@ -87,12 +113,14 @@ docker compose -f orchestration/docker-compose.yml down -v
 
 ### 1. Construir as imagens
 
+Cada serviço tem seu próprio repositório. Com os 5 repos clonados lado a lado
+(ver pré-requisito acima), rode a partir do `fcg-orchestration`:
+
 ```bash
-# A partir da raiz do repositório
-docker build -f services/users-api/Dockerfile        -t fcg/users-api:latest .
-docker build -f services/catalog-api/Dockerfile      -t fcg/catalog-api:latest .
-docker build -f services/payments-api/Dockerfile     -t fcg/payments-api:latest .
-docker build -f services/notifications-api/Dockerfile -t fcg/notifications-api:latest .
+docker build -t fcg/users-api:latest         ../fcg-users-api
+docker build -t fcg/catalog-api:latest       ../fcg-catalog-api
+docker build -t fcg/payments-api:latest      ../fcg-payments-api
+docker build -t fcg/notifications-api:latest ../fcg-notifications-api
 ```
 
 ### 2. Carregar imagens no cluster (apenas Kind)
@@ -108,16 +136,18 @@ kind load docker-image fcg/notifications-api:latest
 
 ### 3. Aplicar os manifestos
 
-```bash
-# Infraestrutura (namespace, RabbitMQ, bancos)
-kubectl apply -f orchestration/k8s/
+Todos os manifestos (namespace, infraestrutura e serviços) estão neste repositório,
+sob `k8s/`. Aplique o namespace primeiro e depois o restante de forma recursiva:
 
-# Serviços de aplicação
-kubectl apply -f services/users-api/k8s/
-kubectl apply -f services/catalog-api/k8s/
-kubectl apply -f services/payments-api/k8s/
-kubectl apply -f services/notifications-api/k8s/
+```bash
+# A partir da raiz do repositório fcg-orchestration
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -R -f k8s/
 ```
+
+> Os manifestos de cada serviço também existem no `/k8s` do repositório individual
+> correspondente (Deployment, Service, ConfigMap e Secret). Para o deploy completo,
+> use a pasta `k8s/` deste repositório de orquestração.
 
 ### 4. Verificar os pods
 
