@@ -20,12 +20,12 @@
     },
     {
       "id": 2,
-      "title": "Taxa de erro (5xx)",
+      "title": "Taxa de erro (4xx + 5xx)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_received_total{code=~\"5..\"}[1m])) by (job)",
+          "expr": "sum(rate(http_requests_received_total{code=~\"[45]..\"}[1m])) by (job)",
           "legendFormat": "{{job}}"
         }
       ]
