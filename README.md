@@ -31,12 +31,20 @@ Cada serviço também possui seu próprio diretório `k8s/` com Deployment, Serv
                           └─────────────────────────────────────┘
 ```
 
+> **Migração serverless (notifications-api → Azure Function):** o consumo de
+> `UserCreatedEvent`/`PaymentProcessedEvent` foi migrado do container
+> `notifications-api` (24/7) para uma Azure Function isolated worker acionada
+> diretamente pelas filas RabbitMQ (`welcome-email`, `purchase-confirmation`).
+> Código em repositório próprio: veja **Links** abaixo. O container
+> `notifications-api` e o serviço `azurite` (storage local exigido pelo host
+> de Functions) permanecem no `docker-compose.yml` apenas como referência/rollback.
+
 ### Fluxo de Cadastro de Usuário
 
 ```
 Cliente → POST /api/user (users-api)
         → users-api publica UserCreatedEvent
-        → notifications-api consome e loga "Boas-vindas para <email>"
+        → notifications-api (ou fcg-notifications-function) consome e loga "Boas-vindas para <email>"
 ```
 
 ### Fluxo de Compra de Jogo
@@ -201,4 +209,5 @@ kubectl port-forward svc/notifications-api -n fcg 5004:80
 - **catalog-api repo:** https://github.com/YuriLucka/fcg-catalog-api
 - **payments-api repo:** https://github.com/YuriLucka/fcg-payments-api
 - **notifications-api repo:** https://github.com/YuriLucka/fcg-notifications-api
+- **notifications-function repo (migração serverless, substitui notifications-api):** https://github.com/YuriLucka/fcg-notifications-function
 - **orchestration repo:** https://github.com/YuriLucka/fcg-orchestration

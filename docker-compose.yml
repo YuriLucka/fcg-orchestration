@@ -112,6 +112,12 @@ services:
       RabbitMq__Host: rabbitmq
     ports: ["5004:8080"]
 
+  # Storage local exigido pelo host do Azure Functions (fcg-notifications-function).
+  # Substitui o container notifications-api acima (que fica apenas como referência/rollback).
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    ports: ["10000:10000", "10001:10001", "10002:10002"]
+
   kong:
     image: kong:3.7
     environment:
