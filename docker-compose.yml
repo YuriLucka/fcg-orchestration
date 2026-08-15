@@ -114,5 +114,12 @@ services:
       RabbitMq__Host: rabbitmq
     ports: ["5004:8080"]
 
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on: [users-api, catalog-api]
+
 volumes:
   rabbitmq-data:
