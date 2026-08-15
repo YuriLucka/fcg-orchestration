@@ -147,7 +147,12 @@ services:
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
-    depends_on: [prometheus]
+    depends_on: [prometheus, loki]
+
+  loki:
+    image: grafana/loki:2.9.8
+    ports: ["3100:3100"]
+    command: -config.file=/etc/loki/local-config.yaml
 
 volumes:
   rabbitmq-data:
