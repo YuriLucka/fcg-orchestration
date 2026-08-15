@@ -13,8 +13,13 @@ data:
           - name: auth-route
             paths: ["/api/Auth"]
             strip_path: false
-          - name: user-route
+          - name: user-register-route
             paths: ["/api/User"]
+            methods: ["POST"]
+            strip_path: false
+          - name: user-protected-route
+            paths: ["/api/User"]
+            methods: ["GET", "PUT", "DELETE", "PATCH"]
             strip_path: false
             plugins:
               - name: jwt
