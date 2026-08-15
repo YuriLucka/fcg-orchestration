@@ -1,0 +1,35 @@
+{
+  "rabbit_version": "3.13.0",
+  "users": [
+    {
+      "name": "guest",
+      "password_hash": "DCGILKCMPLvOIjX54EVjXBkcXE0sw8FwyPM46v/sGjml9nbb",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [{ "name": "/" }],
+  "permissions": [
+    { "user": "guest", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+  ],
+  "queues": [
+    { "name": "welcome-email", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
+    { "name": "purchase-confirmation", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+  ],
+  "exchanges": [
+    { "name": "Fcg.Contracts.Events:UserCreatedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "Fcg.Contracts.Events:PaymentProcessedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "welcome-email", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "purchase-confirmation", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "bindings": [
+    { "source": "Fcg.Contracts.Events:UserCreatedEvent", "vhost": "/", "destination": "welcome-email", "destination_type": "exchange", "routing_key": "", "arguments": {} },
+    { "source": "welcome-email", "vhost": "/", "destination": "welcome-email", "destination_type": "queue", "routing_key": "", "arguments": {} },
+    { "source": "Fcg.Contracts.Events:PaymentProcessedEvent", "vhost": "/", "destination": "purchase-confirmation", "destination_type": "exchange", "routing_key": "", "arguments": {} },
+    { "source": "purchase-confirmation", "vhost": "/", "destination": "purchase-confirmation", "destination_type": "queue", "routing_key": "", "arguments": {} }
+  ],
+  "policies": [],
+  "parameters": [],
+  "global_parameters": [],
+  "topic_permissions": []
+}

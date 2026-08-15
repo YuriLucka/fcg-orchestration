@@ -7,6 +7,8 @@ services:
     ports: ["5672:5672", "15672:15672"]
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -102,18 +104,10 @@ services:
       RabbitMq__Host: rabbitmq
     ports: ["5003:8080"]
 
-  notifications-api:
-    build:
-      context: ../fcg-notifications-api
-      dockerfile: Dockerfile
-    depends_on:
-      rabbitmq: { condition: service_healthy }
-    environment:
-      RabbitMq__Host: rabbitmq
-    ports: ["5004:8080"]
-
   # Storage local exigido pelo host do Azure Functions (fcg-notifications-function).
-  # Substitui o container notifications-api acima (que fica apenas como referência/rollback).
+  # Substitui o container notifications-api (removido: a Function consome as filas
+  # welcome-email/purchase-confirmation diretamente, com a topologia declarada via
+  # rabbitmq/definitions.json).
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     ports: ["10000:10000", "10001:10001", "10002:10002"]
