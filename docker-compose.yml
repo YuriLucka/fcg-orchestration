@@ -39,6 +39,15 @@ services:
       retries: 10
       start_period: 30s
 
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   users-api:
     build:
       context: ../fcg-users-api
@@ -62,9 +71,12 @@ services:
     depends_on:
       rabbitmq: { condition: service_healthy }
       catalog-db: { condition: service_healthy }
+      mongo: { condition: service_healthy }
     environment:
       RabbitMq__Host: rabbitmq
       ConnectionStrings__DefaultConnection: "Server=catalog-db;Database=catalog;User Id=sa;Password=Your_strong_Pass1;TrustServerCertificate=true"
+      MongoSettings__ConnectionString: "mongodb://mongo:27017"
+      MongoSettings__Database: "fcg_catalog"
       JwtSettings__SecretKey: "fcg-fase2-shared-secret-key-please-change-32+chars"
       JwtSettings__Issuer: "FiapCloudGames"
       JwtSettings__Audience: "FiapCloudGames.Client"
