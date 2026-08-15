@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: fcg
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboard-provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: FCG
+        folder: FCG
+        type: file
+        options:
+          path: /etc/grafana/provisioning/dashboards/json
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard
+  namespace: fcg
+data:
+  fcg-overview.json: |
+    {"title":"FCG - Overview","uid":"fcg-overview","timezone":"browser","schemaVersion":39,"version":1,"refresh":"5s","panels":[{"id":1,"title":"Taxa de requisições por segundo","type":"timeseries","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"expr":"sum(rate(http_requests_received_total[1m])) by (job)","legendFormat":"{{job}}"}]},{"id":2,"title":"Taxa de erro (5xx)","type":"timeseries","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"sum(rate(http_requests_received_total{code=~\"5..\"}[1m])) by (job)","legendFormat":"{{job}}"}]},{"id":3,"title":"Latência p95","type":"timeseries","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"expr":"histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job))","legendFormat":"{{job}}"}]},{"id":4,"title":"Requisições por status code","type":"timeseries","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"expr":"sum(rate(http_requests_received_total[1m])) by (code)","legendFormat":"{{code}}"}]},{"id":5,"title":"Total de requisições (desde o início)","type":"stat","gridPos":{"h":4,"w":24,"x":0,"y":16},"targets":[{"expr":"sum(http_requests_received_total) by (job)","legendFormat":"{{job}}"}]}]}
