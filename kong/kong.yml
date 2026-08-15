@@ -1,0 +1,30 @@
+_format_version: "3.0"
+
+services:
+  - name: users-api
+    url: http://users-api:8080
+    routes:
+      - name: auth-route
+        paths: ["/api/Auth"]
+        strip_path: false
+      - name: user-route
+        paths: ["/api/User"]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+  - name: catalog-api
+    url: http://catalog-api:8080
+    routes:
+      - name: catalog-route
+        paths: ["/api/Game", "/api/purchases", "/api/Review"]
+        strip_path: false
+        plugins:
+          - name: jwt
+
+consumers:
+  - username: fcg-app
+    jwt_secrets:
+      - key: "FiapCloudGames"
+        algorithm: HS256
+        secret: "fcg-fase2-shared-secret-key-please-change-32+chars"
