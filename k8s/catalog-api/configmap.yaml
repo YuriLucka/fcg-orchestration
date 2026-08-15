@@ -9,3 +9,4 @@ data:
   JwtSettings__Audience: "FiapCloudGames.Client"
   MongoSettings__ConnectionString: "mongodb://mongodb:27017"
   MongoSettings__Database: "fcg_catalog"
+  RedisSettings__ConnectionString: "redis:6379"
