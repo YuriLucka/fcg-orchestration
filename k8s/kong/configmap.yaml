@@ -1,9 +1,10 @@
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: kong-config
   namespace: fcg
-data:
+type: Opaque
+stringData:
   kong.yml: |
     _format_version: "3.0"
     services:
@@ -23,6 +24,8 @@ data:
             strip_path: false
             plugins:
               - name: jwt
+                config:
+                  claims_to_verify: ["exp"]
       - name: catalog-api
         url: http://catalog-api
         routes:
@@ -31,6 +34,8 @@ data:
             strip_path: false
             plugins:
               - name: jwt
+                config:
+                  claims_to_verify: ["exp"]
     consumers:
       - username: fcg-app
         jwt_secrets:

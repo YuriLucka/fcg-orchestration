@@ -136,7 +136,7 @@ Kong roda em modo **DB-less** (config 100% declarativa, sem banco próprio),
 com a configuração versionada neste repositório:
 
 - Docker Compose: `kong/kong.yml`
-- Kubernetes: `k8s/kong/configmap.yaml`
+- Kubernetes: `k8s/kong/configmap.yaml` (tipo `Secret`, já que embute o segredo do JWT)
 
 ### Tabela de rotas
 
@@ -148,8 +148,9 @@ com a configuração versionada neste repositório:
 | `/api/purchases`    | catalog-api     | JWT obrigatório — **atenção:** minúsculo e plural, foge do padrão PascalCase singular das demais rotas |
 | `/api/Review`       | catalog-api     | JWT obrigatório                                 |
 
-Gateway em `http://localhost:8000` (proxy) / `http://localhost:8001` (admin API,
-somente uso local/debug).
+Gateway em `http://localhost:8000` (proxy). A Admin API (`8001`) não é mais
+publicada no host — fica acessível só de dentro da rede do container
+(`127.0.0.1:8001`), para evitar reconfiguração não autenticada do gateway.
 
 ---
 
@@ -221,7 +222,6 @@ demoram mais — até ~1 min no primeiro start). Acesse:
 | Serviço                          | URL                                         |
 |-----------------------------------|----------------------------------------------|
 | API Gateway (Kong)                | http://localhost:8000/api/...                |
-| Kong Admin API                    | http://localhost:8001                        |
 | Prometheus                        | http://localhost:9090                        |
 | Grafana                           | http://localhost:3000 (login `admin`/`admin`, ou acesso anônimo habilitado) |
 | Loki                              | via Grafana → Explore (datasource já provisionado; não é acessado direto) |
@@ -330,7 +330,7 @@ pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 | Serviço              | Porta Docker | Porta K8s (port-forward) | Porta interna (container) |
 |-----------------------|-------------|---------------------------|-----------------------------|
 | Kong (proxy)          | 8000        | 8000                      | 8000                        |
-| Kong (admin API)      | 8001        | —                         | 8001                        |
+| Kong (admin API)      | não publicada (127.0.0.1 no container) | — | 8001            |
 | users-api             | —* (via Kong)| —* (via Kong)             | 8080                        |
 | catalog-api           | —* (via Kong)| —* (via Kong)             | 8080                        |
 | payments-api          | 5003        | 5003                      | 8080                        |
