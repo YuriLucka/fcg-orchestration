@@ -65,7 +65,7 @@ services:
       ME_CONFIG_MONGODB_SERVER: mongo
       ME_CONFIG_MONGODB_PORT: "27017"
       ME_CONFIG_BASICAUTH: "false"
-    ports: ["8081:8081"]
+    ports: ["127.0.0.1:8081:8081"]
     depends_on:
       mongo: { condition: service_healthy }
 
@@ -73,7 +73,7 @@ services:
     image: rediscommander/redis-commander:latest
     environment:
       REDIS_HOSTS: "local:redis:6379"
-    ports: ["8082:8081"]
+    ports: ["127.0.0.1:8082:8081"]
     depends_on:
       redis: { condition: service_healthy }
 
@@ -120,7 +120,6 @@ services:
       rabbitmq: { condition: service_healthy }
     environment:
       RabbitMq__Host: rabbitmq
-    ports: ["5003:8080"]
 
   # Storage local exigido pelo host do Azure Functions (fcg-notifications-function).
   # Substitui o container notifications-api (removido: a Function consome as filas
@@ -151,7 +150,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.2.0
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_AUTH_ANONYMOUS_ENABLED: "true"
