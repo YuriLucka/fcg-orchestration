@@ -1,3 +1,4 @@
+# ATENÇÃO: a chave "definitions.json" abaixo espelha rabbitmq/definitions.json. Ao editar aqui, atualize lá também (e vice-versa).
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -113,6 +113,17 @@ pelo próprio enunciado do Tech Challenge, é 100% self-hosted (sem custo) e já
 roda tanto via Docker Compose quanto em Kubernetes através dos manifests deste
 repositório (`k8s/prometheus/`, `k8s/grafana/` e `k8s/loki.yaml`).
 
+> **Loki no deploy k8s (limitação conhecida):** `k8s/loki.yaml` sobe o Loki
+> dentro do cluster, mas a única fonte de log configurada para enviar dados a
+> ele é a `fcg-notifications-function`, que roda **local** na máquina do dev
+> (não é um workload do cluster). Num deploy k8s "puro", sem a function
+> apontando para o Loki do cluster (via port-forward, ex.:
+> `kubectl port-forward svc/loki -n fcg 3100:3100`, configurando a function
+> local para publicar logs nesse endpoint), o Loki fica de pé mas **sem
+> nenhum log real** — o datasource aparece vazio no Grafana Explore. Isso é
+> esperado dado que a function roda local de propósito (sem custo de cloud),
+> não é um bug.
+
 ---
 
 ## Persistência Poliglota
@@ -333,7 +344,7 @@ pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 | Kong (admin API)      | não publicada (127.0.0.1 no container) | — | 8001            |
 | users-api             | —* (via Kong)| —* (via Kong)             | 8080                        |
 | catalog-api           | —* (via Kong)| —* (via Kong)             | 8080                        |
-| payments-api          | 5003        | 5003                      | 8080                        |
+| payments-api          | —† (sem rota HTTP)| —† (sem rota HTTP)       | 8080                        |
 | Prometheus            | 9090        | 9090                      | 9090                        |
 | Grafana               | 3000        | 3000                      | 3000                        |
 | Loki                  | 3100        | —                         | 3100                        |
@@ -348,6 +359,9 @@ pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 | catalog-db (SQL)      | 1402        | —                         | 1433                        |
 
 \* Não publicadas no host — acesso somente via Kong (`http://localhost:8000/api/...`).
+† `payments-api` não publica porta no host nem tem rota no Kong — é 100%
+orientado a eventos (consome/produz apenas via RabbitMQ), sem nenhum fluxo
+HTTP que precise ser acessado externamente.
 
 ## Variáveis de Ambiente Principais
 
@@ -363,6 +377,25 @@ pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 | `RabbitMq__Host`                        | todos os serviços         | Host do RabbitMQ                           |
 | `RabbitMq__User`                        | todos os serviços         | Usuário do RabbitMQ (padrão: guest)        |
 | `RabbitMq__Pass`                         | todos os serviços         | Senha do RabbitMQ (padrão: guest)          |
+
+---
+
+### Configs espelhadas entre compose e k8s
+
+Alguns arquivos de configuração existem em duplicidade — uma versão consumida
+pelo Docker Compose e outra, equivalente, inline nos manifestos do
+Kubernetes. Hoje estão sincronizados manualmente (não há geração automática a
+partir de uma fonte única), então **ao editar um lado, atualize o outro**:
+
+| Compose                              | Kubernetes                          |
+|---------------------------------------|--------------------------------------|
+| `kong/kong.yml`                       | `k8s/kong/configmap.yaml` (Secret)   |
+| `prometheus/prometheus.yml`           | `k8s/prometheus/configmap.yaml`      |
+| `rabbitmq/definitions.json`           | chave `definitions.json` em `k8s/rabbitmq.yaml` |
+| `grafana/dashboards/fcg-overview.json`| chave `fcg-overview.json` (minificada) em `k8s/grafana/configmap.yaml` |
+
+Cada um dos 4 arquivos do lado k8s tem um comentário `# ATENÇÃO: espelha ...`
+no topo, lembrando do par correspondente.
 
 ---
 

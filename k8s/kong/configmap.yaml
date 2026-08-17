@@ -1,3 +1,4 @@
+# ATENÇÃO: espelha kong/kong.yml. Ao editar aqui, atualize lá também (e vice-versa).
 apiVersion: v1
 kind: Secret
 metadata:

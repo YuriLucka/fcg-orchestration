@@ -25,6 +25,7 @@ data:
         options:
           path: /etc/grafana/provisioning/dashboards/json
 ---
+# ATENÇÃO: a chave "fcg-overview.json" abaixo espelha grafana/dashboards/fcg-overview.json (minificado). Ao editar aqui, atualize lá também (e vice-versa).
 apiVersion: v1
 kind: ConfigMap
 metadata:
