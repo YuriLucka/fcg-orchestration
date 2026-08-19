@@ -19,39 +19,34 @@ subir a stack completa do zero.
 ## Visão Geral da Arquitetura
 
 ```
-                                   Cliente
-                                      │
-                                      ▼
-                        ┌─────────────────────────┐
-                        │   Kong API Gateway :8000  │ ◄── único ponto de entrada
-                        └────────────┬─────────────┘     externo, valida JWT
-                    ┌────────────────┴───────────────────┐
-                    ▼                                     ▼
-          ┌───────────────────┐                ┌────────────────────────┐
-          │  users-api         │                │  catalog-api            │
-          │  (SQL Server users)│                │  (SQL Server catalog)   │
-          └─────────┬──────────┘                └───┬──────────┬─────────┘
-                     │ UserCreatedEvent               │          │
-                     ▼                                │          ▼
-              ┌─────────────┐          OrderPlacedEvent│   ┌────────────┐  ┌───────┐
-              │  RabbitMQ    │◄─────────────────────────┘   │  MongoDB   │  │ Redis │
-              │ (filas com   │                              │ (reviews)  │  │(cache │
-              │ topologia    │       PaymentProcessedEvent   └────────────┘  │ jogos)│
-              │ pré-declarada)│◄──────────────┐                              └───────┘
-              └──────┬───────┘                │
-                     │                ┌────────┴─────────┐
-                     │                │  payments-api      │
-                     │                │  (stateless, sem DB)│
-                     │                └────────────────────┘
-                     │
-                     ▼ (welcome-email / purchase-confirmation)
-       ┌──────────────────────────────────────────┐
-       │  fcg-notifications-function (fora deste    │
-       │  compose, repo próprio, `func start` local) │
-       └──────────────────────────────────────────┘
+                                         Cliente
+                                            v
+                               +------------------------+
+                               | Kong API Gateway :8000  |<-- unico ponto de entrada, valida JWT
+                               +------------|-----------+
+                   -------------------------|--------------------------
+                   v                                                  v
+        +--------------------+                            +----------------------+
+        | users-api           |                           | catalog-api           | +--> MongoDB (reviews)
+        | (SQL Server users)  |                           | (SQL Server catalog)  | +--> Redis   (cache jogos)
+        +----------|---------+                            +-----------|----------+
+                     UserCreatedEvent     OrderPlaced / PaymentProcessed
+                   ------------------    v    -------------------------
+                      +-------------------------------------+
+                      | RabbitMQ                             |
+                      | (filas com topologia pre-declarada)  |
+                      +------------------|------------------+
+                   ----------------------|-----------------------------
+                   |                                                  |
+           consome / publica                        welcome-email / purchase-confirmation
+                   |                                                  |
+        +---------------------+                 +-------------------------------------------+
+        | payments-api         |                | fcg-notifications-function                 |
+        | (stateless, sem DB)  |                | (fora do compose, roda local: func start)  |
+        +---------------------+                 +-------------------------------------------+
 
-        Prometheus ──scrape──> users-api / catalog-api ──> Grafana (dashboard)
-        Loki <──logs (function)── fcg-notifications-function ──> Grafana (Explore)
+        Prometheus --scrape--> users-api / catalog-api --> Grafana (dashboard)
+        Loki <--logs (function)-- fcg-notifications-function --> Grafana (Explore)
 ```
 
 > **Migração serverless (notifications-api → Azure Function):** o consumo de
