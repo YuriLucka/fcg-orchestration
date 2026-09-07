@@ -872,7 +872,7 @@ namespace Catalog.Application.Services
         private const string AllGamesCacheKey = "catalog:games:all";
         private static readonly DistributedCacheEntryOptions CacheOptions = new()
         {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
         };
 
         private readonly IGameRepository _gameRepository;
@@ -2095,6 +2095,41 @@ public class MassTransitEnvelopeTests
 
         Assert.False(result.Approved);
     }
+
+    // ── Formato REAL observado em producao ────────────────────────────────
+    // Os dois testes acima cobrem `status` como string. Na pratica, o MassTransit
+    // serializa o enum PaymentStatus como INTEIRO (0=Approved, 1=Rejected), porque
+    // nenhum servico configura JsonStringEnumConverter. Confirmado inspecionando a
+    // mensagem crua na fila `purchase-confirmation` durante a Task 11.
+    // Estes dois testes cobrem o branch que de fato executa em producao.
+
+    [Fact]
+    public void ParsePaymentProcessed_DeveMarcarAprovado_QuandoStatusForInteiroZero()
+    {
+        var gameId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var raw = $$"""
+        { "message": { "orderId": "22222222-2222-2222-2222-222222222222", "userId": "{{userId}}", "gameId": "{{gameId}}", "status": 0 } }
+        """;
+
+        var result = MassTransitEnvelope.ParsePaymentProcessed(raw);
+
+        Assert.True(result.Approved);
+        Assert.Equal(gameId, result.GameId);
+        Assert.Equal(userId, result.UserId);
+    }
+
+    [Fact]
+    public void ParsePaymentProcessed_DeveMarcarReprovado_QuandoStatusForInteiroUm()
+    {
+        var raw = $$"""
+        { "message": { "orderId": "22222222-2222-2222-2222-222222222222", "userId": "{{Guid.NewGuid()}}", "gameId": "{{Guid.NewGuid()}}", "status": 1 } }
+        """;
+
+        var result = MassTransitEnvelope.ParsePaymentProcessed(raw);
+
+        Assert.False(result.Approved);
+    }
 }
 ```
 
@@ -2104,7 +2139,7 @@ public class MassTransitEnvelopeTests
 cd fcg-notifications-function
 dotnet test Notifications.Function.Tests/Notifications.Function.Tests.csproj
 ```
-Esperado: PASS (3 testes). Se falhar, ajustar `MassTransitEnvelope.cs` conforme os nomes de campo — esse é o ponto de checagem previsto no Step 4 da Task 11.
+Esperado: PASS (5 testes). Se falhar, ajustar `MassTransitEnvelope.cs` conforme os nomes de campo — esse é o ponto de checagem previsto no Step 4 da Task 11.
 
 - [ ] **Step 3: IaC Bicep (deliverable, deploy real é opcional)**
 
@@ -2210,7 +2245,7 @@ O enunciado pede, fora do bloco específico da Opção A/B, que o vídeo "demons
 
 **Interfaces:**
 - Consumes: Grafana já provisionado (Task 8).
-- Produces: logs da function pesquisáveis no Grafana Explore com o label `app="fcg-notifications-function"` — é o que a Task 16 (ensaio) e o vídeo vão mostrar.
+- Produces: logs da function pesquisáveis no Grafana Explore com o label `app="fcg-notifications-function"` — é o que a Task 17 (ensaio) e o vídeo vão mostrar.
 
 - [ ] **Step 1: Serviço Loki no docker-compose**
 
@@ -2332,7 +2367,7 @@ cd ../fcg-notifications-function
 func start
 ```
 
-Em outro terminal, disparar um evento (registrar usuário via gateway, igual Task 16 Step 3), depois abrir `http://localhost:3000` → **Explore** → datasource **Loki** → query `{app="fcg-notifications-function"}`. Esperado: a linha `[EMAIL] Boas-vindas enviado para ...` aparece no Grafana, não só no terminal.
+Em outro terminal, disparar um evento (registrar usuário via gateway, igual Task 17 Step 3), depois abrir `http://localhost:3000` → **Explore** → datasource **Loki** → query `{app="fcg-notifications-function"}`. Esperado: a linha `[EMAIL] Boas-vindas enviado para ...` aparece no Grafana, não só no terminal.
 
 - [ ] **Step 7: Commit**
 
@@ -2353,26 +2388,114 @@ git push
 - Modify: `fcg-orchestration/docker-compose.yml`
 - Delete: `fcg-orchestration/k8s/notifications-api/` (pasta inteira)
 
-- [ ] **Step 1: Remover do docker-compose**
+> **Pré-requisito descoberto na Task 13 — leia antes de remover nada.** As filas `welcome-email` e `purchase-confirmation` não existem sozinhas: quem as declarava era o próprio `notifications-api`, via `AddConsumer<>` do MassTransit, ao subir. O `RabbitMQTrigger` da Azure Function faz *passive declare* — espera a fila já existir e falha com `404 NOT_FOUND - no queue 'welcome-email'` se não existir. Ou seja: remover o container sem mais nada quebra a Function em qualquer ambiente limpo, incluindo a gravação do vídeo e a máquina de quem for avaliar. Por isso esta task **primeiro** declara a topologia no RabbitMQ (Steps 1–2), e só **depois** remove o container (Step 3).
 
-Em `fcg-orchestration/docker-compose.yml`, remover o bloco inteiro do serviço `notifications-api:` (linhas 84–92 na versão atual).
+- [ ] **Step 1: Declarar a topologia do RabbitMQ via definitions.json**
 
-- [ ] **Step 2: Remover manifests k8s**
+Criar `fcg-orchestration/rabbitmq/definitions.json` reproduzindo a topologia que o MassTransit criava. A estrutura é: a mensagem publicada vai pro exchange do *tipo de mensagem* (fanout, durável), que é ligado ao exchange do *endpoint*, que por sua vez é ligado à *fila* do endpoint.
+
+```json
+{
+  "rabbit_version": "3.13.0",
+  "users": [
+    {
+      "name": "guest",
+      "password_hash": "L8Tuv8ozyKrDL0BpsBrCtI6ZWlDnNy4t5abtqBhkYbYAfDpu",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [{ "name": "/" }],
+  "permissions": [
+    { "user": "guest", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+  ],
+  "queues": [
+    { "name": "welcome-email", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
+    { "name": "purchase-confirmation", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+  ],
+  "exchanges": [
+    { "name": "Fcg.Contracts.Events:UserCreatedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "Fcg.Contracts.Events:PaymentProcessedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "welcome-email", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "purchase-confirmation", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "bindings": [
+    { "source": "Fcg.Contracts.Events:UserCreatedEvent", "vhost": "/", "destination": "welcome-email", "destination_type": "exchange", "routing_key": "", "arguments": {} },
+    { "source": "welcome-email", "vhost": "/", "destination": "welcome-email", "destination_type": "queue", "routing_key": "", "arguments": {} },
+    { "source": "Fcg.Contracts.Events:PaymentProcessedEvent", "vhost": "/", "destination": "purchase-confirmation", "destination_type": "exchange", "routing_key": "", "arguments": {} },
+    { "source": "purchase-confirmation", "vhost": "/", "destination": "purchase-confirmation", "destination_type": "queue", "routing_key": "", "arguments": {} }
+  ],
+  "policies": [],
+  "parameters": [],
+  "global_parameters": [],
+  "topic_permissions": []
+}
+```
+
+> O `password_hash` é o do usuário `guest`/`guest` no algoritmo `rabbit_password_hashing_sha256`. **Confirme que funciona** logando no management UI depois de subir — se o login falhar, exporte o hash real de uma instância que ainda tenha o usuário criado normalmente (`docker compose exec rabbitmq rabbitmqctl export_definitions -`) e substitua.
+
+- [ ] **Step 2: Montar os arquivos no serviço rabbitmq (compose + k8s)**
+
+Criar `fcg-orchestration/rabbitmq/rabbitmq.conf`:
+
+```
+load_definitions = /etc/rabbitmq/definitions.json
+```
+
+Em `fcg-orchestration/docker-compose.yml`, no serviço `rabbitmq`, adicionar os dois volumes (mantendo o `rabbitmq-data` que já existe):
+
+```yaml
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+```
+
+Em `fcg-orchestration/k8s/rabbitmq.yaml`, adicionar um ConfigMap `rabbitmq-config` (namespace `fcg`) com as chaves `rabbitmq.conf` e `definitions.json` (mesmo conteúdo acima), e montá-las no Deployment em `/etc/rabbitmq/`, usando `items` pra escopar cada chave — mesmo padrão já usado em `k8s/grafana/deployment.yaml`.
+
+- [ ] **Step 3: Remover do docker-compose**
+
+Em `fcg-orchestration/docker-compose.yml`, remover o bloco inteiro do serviço `notifications-api:`.
+
+- [ ] **Step 4: Remover manifests k8s**
 
 ```bash
 git -C fcg-orchestration rm -r k8s/notifications-api
 ```
 
-- [ ] **Step 3: Verificar que o resto sobe sem essa peça**
+- [ ] **Step 5: Verificar que o resto sobe sem essa peça — do ZERO, com volume limpo**
 
 ```bash
 cd fcg-orchestration
+docker compose down -v
 docker compose up -d --build
+sleep 40
 docker compose ps
 ```
+O `-v` é essencial: apaga o volume do RabbitMQ, garantindo que as filas venham do `definitions.json` e não de estado antigo deixado pelo `notifications-api`.
+
 Esperado: nenhum serviço `notifications-api` na lista; todos os outros `healthy`/`running`.
 
-- [ ] **Step 4: Commit**
+Confirme que as filas foram declaradas pelo `definitions.json`, num RabbitMQ recém-criado e sem nenhum consumidor MassTransit tendo subido:
+
+```bash
+curl -s -u guest:guest http://localhost:15672/api/queues/%2F
+```
+Esperado: a resposta contém `welcome-email` e `purchase-confirmation`.
+
+E o teste que de fato importa — a Function indexa e recebe evento num ambiente limpo:
+
+```bash
+cd ../fcg-notifications-function && func start
+```
+Em outro terminal, dispare um cadastro pelo gateway e observe o log da function:
+
+```bash
+curl -X POST http://localhost:8000/api/User -H "Content-Type: application/json" -d '{"name":"Teste Topologia","email":"topologia@fcg.com","password":"Senha123!"}'
+```
+Esperado: `func start` indexa as duas functions SEM o erro `404 NOT_FOUND - no queue`, e o log `[EMAIL] Boas-vindas enviado para topologia@fcg.com` aparece. Isso prova que a topologia declarativa substituiu de fato o bootstrap que o `notifications-api` fazia.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git -C fcg-orchestration add docker-compose.yml
@@ -2383,7 +2506,64 @@ git -C fcg-orchestration commit -m "chore: remove container notifications-api (s
 
 ---
 
-### Task 15: README central da orchestration
+### Task 15: GUI pro Mongo e pro Redis (mongo-express + redis-commander)
+
+Adicionada a pedido do usuário, pra facilitar a gravação do vídeo: Mongo e Redis hoje só têm acesso via linha de comando (`mongosh`, `redis-cli`). Grafana, Prometheus e RabbitMQ já têm UI web nativa — falta essas duas. `mongo-express` e `redis-commander` são as ferramentas leves e padrão pra isso (mesmo padrão já usado em outros projetos do usuário). Kong fica de fora — a GUI oficial (Kong Manager) é Enterprise, e a alternativa open-source (Konga) está abandonada e não é compatível com Kong 3.x; a Admin API em JSON via Postman/navegador é o suficiente pro vídeo.
+
+**Files:**
+- Modify: `fcg-orchestration/docker-compose.yml`
+
+**Interfaces:**
+- Consumes: `mongo` (Task 1) e `redis` (Task 4) já rodando na rede do compose.
+- Produces: URLs `http://localhost:8081` (mongo-express) e `http://localhost:8082` (redis-commander), usadas na Task 16 (README) e no roteiro de gravação.
+
+- [ ] **Step 1: Adicionar mongo-express e redis-commander ao docker-compose**
+
+Em `fcg-orchestration/docker-compose.yml`, adicionar:
+
+```yaml
+  mongo-express:
+    image: mongo-express:1.0
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: "27017"
+      ME_CONFIG_BASICAUTH: "false"
+    ports: ["8081:8081"]
+    depends_on:
+      mongo: { condition: service_healthy }
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      REDIS_HOSTS: "local:redis:6379"
+    ports: ["8082:8081"]
+    depends_on:
+      redis: { condition: service_healthy }
+```
+
+> `redis-commander` escuta na porta `8081` dentro do container por padrão — por isso o mapeamento é `8082:8081`, pra não colidir com o `mongo-express` (que usa `8081:8081`).
+
+- [ ] **Step 2: Verificar**
+
+```bash
+cd fcg-orchestration
+docker compose up -d mongo redis mongo-express redis-commander
+sleep 15
+curl -s -o /dev/null -w "mongo-express: %{http_code}\n" http://localhost:8081
+curl -s -o /dev/null -w "redis-commander: %{http_code}\n" http://localhost:8082
+```
+Esperado: `200` nos dois. Abrir `http://localhost:8081` no navegador e confirmar que aparece o database `fcg_catalog` com a coleção `reviews` (populada se a Task 3 já tiver sido exercitada). Abrir `http://localhost:8082` e confirmar que a conexão `local` aparece e lista as chaves do Redis (ex: `catalog:games:all`, se o cache já tiver sido populado por um `GET /api/Game`).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git -C fcg-orchestration add docker-compose.yml
+git -C fcg-orchestration commit -m "feat: adiciona mongo-express e redis-commander para visualizacao no video"
+```
+
+---
+
+### Task 16: README central da orchestration
 
 **Files:**
 - Modify: `fcg-orchestration/README.md` (reescrita quase completa)
@@ -2393,12 +2573,12 @@ git -C fcg-orchestration commit -m "chore: remove container notifications-api (s
 Reescrever `fcg-orchestration/README.md` cobrindo, nesta ordem:
 
 1. Visão geral com o novo diagrama (Kong na frente de users-api/catalog-api; Prometheus/Grafana observando os dois; MongoDB + Redis pendurados no catalog-api; `fcg-notifications-function` fora do compose, rodando via `func start`, consumindo as mesmas filas).
-2. Seção **"Stack de Observabilidade escolhida"**: Opção A — Prometheus + Grafana, self-hosted, deploy via manifests k8s em `k8s/prometheus/` e `k8s/grafana/`. Justificar a escolha (grátis, já roda em k8s, é a opção que o próprio enunciado recomenda pra observabilidade de aplicação).
-3. Seção **"Persistência Poliglota"**: MongoDB guarda avaliações de jogos (`fcg-catalog-api`, coleção `reviews`) — cenário de dado não-relacional/flexível. Redis cacheia a listagem de jogos (`GET /api/Game`) por 30s — reduz round-trip ao SQL Server em toda consulta popular.
+2. Seção **"Stack de Observabilidade escolhida"**: Opção A — Prometheus (métricas) + Grafana (dashboard) + Loki (logs centralizados da function, Task 13), self-hosted, deploy via manifests k8s em `k8s/prometheus/`, `k8s/grafana/` e `k8s/loki.yaml`. Justificar a escolha (grátis, já roda em k8s, é a opção que o próprio enunciado recomenda pra observabilidade de aplicação).
+3. Seção **"Persistência Poliglota"**: MongoDB guarda avaliações de jogos (`fcg-catalog-api`, coleção `reviews`) — cenário de dado não-relacional/flexível. Redis cacheia a listagem de jogos (`GET /api/Game`) por 5min — reduz round-trip ao SQL Server em toda consulta popular.
 4. Seção **"API Gateway"**: Kong DB-less, config versionada em `kong/kong.yml` (compose) e `k8s/kong/configmap.yaml` (k8s). Tabela de rotas: `/api/Auth` (público), `/api/User`, `/api/Game`, `/api/purchases` (minúsculo/plural, atenção), `/api/Review` (JWT obrigatório).
 5. Seção **"Serverless"**: link pro repo `fcg-notifications-function`, explicação de que substitui o container antigo, como rodar (`func start`) junto do resto.
-6. Atualizar "Como rodar com Docker Compose" incluindo `kong`, `prometheus`, `grafana`, `mongo`, `redis`, `azurite` na tabela de URLs (Kong :8000, Prometheus :9090, Grafana :3000 admin/admin, Mongo :27017, Redis :6379). **Remover as linhas de `users-api (Swagger)` e `catalog-api (Swagger)` como URLs acessíveis diretamente** — desde a Task 9 essas portas não são mais publicadas no host; todo acesso externo passa por `http://localhost:8000/api/...` via Kong. Deixar isso explícito no README pra quem for gravar o vídeo não tentar acessar `:5001`/`:5002` direto.
-7. Atualizar "Como fazer deploy no Kubernetes" — build/load de imagens continua igual (4 serviços, sem notifications-api), `kubectl apply -R -f k8s/` já pega Kong/Prometheus/Grafana/Mongo/Redis automaticamente por estarem em `k8s/`.
+6. Atualizar "Como rodar com Docker Compose" incluindo `kong`, `prometheus`, `grafana`, `loki`, `mongo`, `redis`, `mongo-express`, `redis-commander`, `azurite` na tabela de URLs (Kong :8000, Prometheus :9090, Grafana :3000 admin/admin, Loki :3100 — acessado via Grafana Explore, não direto, Mongo :27017, mongo-express :8081, Redis :6379, redis-commander :8082, RabbitMQ Management :15672 guest/guest). **Remover as linhas de `users-api (Swagger)` e `catalog-api (Swagger)` como URLs acessíveis diretamente** — desde a Task 9 essas portas não são mais publicadas no host; todo acesso externo passa por `http://localhost:8000/api/...` via Kong. Deixar isso explícito no README pra quem for gravar o vídeo não tentar acessar `:5001`/`:5002` direto.
+7. Atualizar "Como fazer deploy no Kubernetes" — build/load de imagens continua igual (4 serviços, sem notifications-api), `kubectl apply -R -f k8s/` já pega Kong/Prometheus/Grafana/Loki/Mongo/Redis automaticamente por estarem em `k8s/`. Mencionar que o RabbitMQ agora sobe com a topologia de filas (`welcome-email`/`purchase-confirmation`) pré-declarada via ConfigMap (`k8s/rabbitmq.yaml`, Task 14) — não depende mais do `notifications-api` pra existir.
 8. Atualizar "Pré-requisito: clonar os repositórios" — trocar "5 repositórios" por "4 repositórios + `fcg-notifications-function` (roda à parte, local)".
 9. Atualizar seção "Links" com a URL do `fcg-notifications-function` e remover a de `fcg-notifications-api` (ou marcar como "descontinuado, ver fcg-notifications-function").
 
@@ -2415,7 +2595,7 @@ git -C fcg-orchestration commit -m "docs: atualiza README com gateway, observabi
 
 ---
 
-### Task 16: Ensaio geral + tráfego sintético (preparação do vídeo)
+### Task 17: Ensaio geral + tráfego sintético (preparação do vídeo)
 
 **Files:** nenhum — task operacional, sem alteração de código. Existe porque a entrega exige um vídeo mostrando "métricas em tempo real" e "a arquitetura em funcionamento", e isso só é verdade se alguém já tiver rodado a stack inteira junta pelo menos uma vez antes de gravar. Todas as tasks anteriores validam cada peça isolada; esta valida o conjunto.
 
@@ -2428,7 +2608,7 @@ docker compose up -d --build
 sleep 30
 docker compose ps
 ```
-Esperado: todos os serviços `running`/`healthy` — `rabbitmq`, `users-db`, `catalog-db`, `mongo`, `redis`, `azurite`, `users-api`, `catalog-api`, `payments-api`, `kong`, `prometheus`, `grafana`. Nenhum em `restarting` ou `exited`.
+Esperado: todos os serviços `running`/`healthy` — `rabbitmq`, `users-db`, `catalog-db`, `mongo`, `redis`, `azurite`, `users-api`, `catalog-api`, `payments-api`, `kong`, `prometheus`, `grafana`, `loki`, `mongo-express`, `redis-commander`. Nenhum `notifications-api` na lista (foi removido na Task 14). Nenhum em `restarting` ou `exited`.
 
 - [ ] **Step 2: Subir a Function em paralelo**
 
@@ -2499,13 +2679,20 @@ done
 
 Abrir `http://localhost:3000`, dashboard "FCG - Overview" (pasta FCG), com o loop do Step 4 rodando. Esperado: os 4 painéis de série temporal mostram linhas se movendo (taxa de requisição > 0, taxa de erro > 0 pelas respostas `400`/`401`, latência com valor, breakdown por status code com pelo menos `200` e `400`), e o painel "Total de requisições" com número > 0 subindo.
 
+- [ ] **Step 5.5: Confirmar as GUIs de conveniência (Task 15) mostram o dado real do ensaio**
+
+- `http://localhost:8081` (mongo-express) → database `fcg_catalog` → coleção `reviews` → deve mostrar a avaliação do Elden Ring criada no Step 3.
+- `http://localhost:8082` (redis-commander) → conexão `local` → deve listar a chave `catalog:games:all` (populada no Step 3, passo 5).
+- `http://localhost:15672` (RabbitMQ Management, guest/guest) → Queues → `welcome-email` e `purchase-confirmation` devem existir e mostrar mensagens processadas (Task 14 — confirma que a topologia declarativa está de pé).
+- Confirmar acesso direto bloqueado: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5001/api/User` e a mesma coisa em `:5002` devem falhar conexão (Task 9) — é fácil esquecer de testar isso de novo depois de tantas mudanças.
+
 - [ ] **Step 6: Parar o loop de tráfego antes de gravar de verdade (opcional)**
 
 Deixar rodando é o que dá o efeito "tempo real" no vídeo — mas se quiser controlar melhor o timing da narração, `Ctrl+C` no loop e disparar chamadas manuais pontuais enquanto fala, já que os painéis atualizam a cada 5s (`refresh: 5s` no dashboard).
 
 - [ ] **Step 7: Registrar quaisquer ajustes encontrados**
 
-Se algum passo acima falhar (porta errada, variável de ambiente faltando, serviço não subiu), corrigir no repositório correspondente e re-rodar este Task 16 do Step 1 antes de considerar pronto pra gravar — não commitar o Task 15 (README) como "guia central" sem ele ter sido de fato seguido do zero uma vez.
+Se algum passo acima falhar (porta errada, variável de ambiente faltando, serviço não subiu), corrigir no repositório correspondente e re-rodar este Task 17 do Step 1 antes de considerar pronto pra gravar — não commitar o Task 16 (README) como "guia central" sem ele ter sido de fato seguido do zero uma vez.
 
 ---
 
@@ -2523,10 +2710,10 @@ Se algum passo acima falhar (porta errada, variável de ambiente faltando, servi
 | Deploy da stack de observabilidade via k8s | 7, 8 |
 | NoSQL obrigatório (driver oficial) | 1, 2, 3 |
 | Cache distribuído obrigatório | 4, 5 |
-| README da orchestration como guia central | 15 |
+| README da orchestration como guia central | 16 |
 | Container antigo desligado (não roda mais 24/7) | 14 |
 | Logs da Function em plataforma centralizada (não só terminal) | 13 |
-| Stack inteira validada junta (não só peça por peça) + tráfego real pro Grafana no vídeo | 16 |
+| Stack inteira validada junta (não só peça por peça) + tráfego real pro Grafana no vídeo | 17 |
 
 Nenhum gap encontrado nos requisitos técnicos. Vídeo, relatório PDF/TXT e link de documentação (Miro) são entregáveis manuais fora do escopo de código — não geram task de implementação, mas cada item deles está mapeado no checklist abaixo, item por item do enunciado, pra nada ficar esquecido na hora de montar a entrega.
 
@@ -2541,11 +2728,11 @@ Auditoria linha a linha contra a seção "Entregáveis da Fase 3" do enunciado.
 | Bullet do enunciado | Onde já foi validado | Falta fazer |
 |---|---|---|
 | "Realizar requisições via Gateway, mostrando o roteamento e a segurança" | Task 9 Steps 4–7 (login público, 401 sem token, 200 com token, porta antiga bloqueada) | Gravar a tela repetindo esses `curl`/Postman/Insomnia na hora |
-| "Demonstrar a Função Serverless sendo acionada e exibir seus logs **na plataforma centralizada**" | Task 13 (Loki + Grafana Explore) + Task 16 Step 3 (fluxo dispara o evento, log aparece no Grafana, não só no terminal) | Gravar a aba Explore do Grafana filtrada por `{app="fcg-notifications-function"}` no momento em que o evento dispara |
-| "Apresentar o dashboard do Grafana com métricas em tempo real" (Opção A) | Task 16 Steps 4–5 (tráfego sintético fazendo os painéis se moverem) | Gravar com o loop de tráfego rodando, senão os gráficos ficam parados |
-| "Explicar como o NoSQL foi integrado à arquitetura" | Task 2/3 (Review/MongoDB) + Task 16 Step 3 (avaliação salva, conferida via `mongosh`) | Narração — explicar que avaliações de jogos vão pro Mongo, não pro SQL Server |
+| "Demonstrar a Função Serverless sendo acionada e exibir seus logs **na plataforma centralizada**" | Task 13 (Loki + Grafana Explore) + Task 17 Step 3 (fluxo dispara o evento, log aparece no Grafana, não só no terminal) | Gravar a aba Explore do Grafana filtrada por `{app="fcg-notifications-function"}` no momento em que o evento dispara |
+| "Apresentar o dashboard do Grafana com métricas em tempo real" (Opção A) | Task 17 Steps 4–5 (tráfego sintético fazendo os painéis se moverem) | Gravar com o loop de tráfego rodando, senão os gráficos ficam parados |
+| "Explicar como o NoSQL foi integrado à arquitetura" | Task 2/3 (Review/MongoDB) + Task 17 Step 3 (avaliação salva, conferida via `mongosh`) | Narração — explicar que avaliações de jogos vão pro Mongo, não pro SQL Server |
 
-Isso é só a gravação em si — decisão de quem aparece, roteiro de fala, edição — que fica de fora, é manual por natureza. **Lembrete de tempo:** o vídeo tem limite de 20 minutos — os 4 bullets acima cabem tranquilo em ~10-12min narrando direto; não é preciso repetir cada `curl` do Task 16/9, um exemplo de cada já prova o ponto.
+Isso é só a gravação em si — decisão de quem aparece, roteiro de fala, edição — que fica de fora, é manual por natureza. **Lembrete de tempo:** o vídeo tem limite de 20 minutos — os 4 bullets acima cabem tranquilo em ~10-12min narrando direto; não é preciso repetir cada `curl` do Task 17/9, um exemplo de cada já prova o ponto.
 
 **Recomendação baseada no padrão de correção real:** o feedback do professor na Fase 2 (nota 90, texto: *"Evidenciou k8s usando o kind mostrando todo deployment dentro do cluster"*) mostra que ele valoriza especificamente ver o `kubectl get pods` rodando, não só o `docker compose up`. O enunciado da Fase 3 não exige isso explicitamente no vídeo, mas como os manifestos do Kong/Prometheus/Grafana/Mongo/Redis (Tasks 1,4,7,8,10) são parte do entregável de código, vale a pena incluir 30-60s extra no vídeo fazendo `kubectl apply -R -f k8s/` e `kubectl get pods -n fcg` mostrando tudo `Running` — reforça exatamente o que já rendeu nota alta antes, com pouco custo adicional de gravação.
 
@@ -2557,9 +2744,9 @@ Isso é só a gravação em si — decisão de quem aparece, roteiro de fala, ed
 | Link para o novo repositório da Função Serverless | 11 | `fcg-notifications-function` criado público no GitHub |
 | Repositório de orquestração com manifestos do Gateway e da stack de monitoramento | 9, 10, 7, 8 | `k8s/kong/`, `k8s/prometheus/`, `k8s/grafana/` |
 | Código com novos drivers de NoSQL e Cache | 2, 3, 5 | `MongoDB.Driver`, `Microsoft.Extensions.Caching.StackExchangeRedis` |
-| README da orchestration como guia central | 15 | Reescrito cobrindo toda a stack nova |
+| README da orchestration como guia central | 16 | Reescrito cobrindo toda a stack nova |
 
-Tudo isso é gerado pela execução das Tasks 1–15 — não sobra nada manual aqui além de dar `git push` nos 5 repositórios (4 existentes + o novo) no final.
+Tudo isso é gerado pela execução das Tasks 1–16 — não sobra nada manual aqui além de dar `git push` nos 5 repositórios (4 existentes + o novo) no final.
 
 ### Relatório de entrega (PDF ou TXT) — 100% manual, plano não gera isso
 
@@ -2593,7 +2780,7 @@ Link do vídeo:
 - https://youtu.be/faspCuzKZmU?si=l2MGy25ttus6-fG_
 ```
 
-**Achado que muda o que eu tinha escrito antes:** "link da documentação" nesse precedente **não é o Miro** — é o README do `fcg-orchestration` (que é justamente o guia central que a Task 15 deste plano reescreve). O Miro (Event Storming) nunca apareceu nos dois relatórios já avaliados. Pra Fase 3, mais seguro seguir o padrão que já pontuou 90/100 duas vezes: apontar pro README do orchestration, não pro Miro. Também vale notar: **Fase 1 usava grupo "Grupo 115"**, Fase 2 usava **"Grupo 6"** — o número do grupo muda a cada fase (é atribuído pelo Moodle, não escolhido por vocês); confirme o número atual da Fase 3 antes de preencher, não reutilize "Grupo 6" por hábito.
+**Achado que muda o que eu tinha escrito antes:** "link da documentação" nesse precedente **não é o Miro** — é o README do `fcg-orchestration` (que é justamente o guia central que a Task 16 deste plano reescreve). O Miro (Event Storming) nunca apareceu nos dois relatórios já avaliados. Pra Fase 3, mais seguro seguir o padrão que já pontuou 90/100 duas vezes: apontar pro README do orchestration, não pro Miro. Também vale notar: **Fase 1 usava grupo "Grupo 115"**, Fase 2 usava **"Grupo 6"** — o número do grupo muda a cada fase (é atribuído pelo Moodle, não escolhido por vocês); confirme o número atual da Fase 3 antes de preencher, não reutilize "Grupo 6" por hábito.
 
 Checklist adaptado pra Fase 3, no mesmo formato:
 

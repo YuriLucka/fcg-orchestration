@@ -127,7 +127,7 @@ repositório (`k8s/prometheus/`, `k8s/grafana/` e `k8s/loki.yaml`).
   `reviews`) — cenário de dado não-relacional e de schema flexível (nota,
   comentário, autor), sem necessidade de relacionamento forte com as tabelas
   SQL do catálogo.
-- **Redis** cacheia a listagem de jogos (`GET /api/Game`) por 30 segundos —
+- **Redis** cacheia a listagem de jogos (`GET /api/Game`) por 5 minutos —
   reduz o round-trip ao SQL Server em toda consulta popular de catálogo.
 
 Ambos usam drivers oficiais (`MongoDB.Driver` e `StackExchange.Redis`) no
