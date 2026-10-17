@@ -4,9 +4,10 @@ metadata:
   name: kong
   namespace: fcg
 spec:
+  type: LoadBalancer
   selector:
     app: kong
   ports:
     - name: proxy
-      port: 8000
+      port: 80
       targetPort: 8000

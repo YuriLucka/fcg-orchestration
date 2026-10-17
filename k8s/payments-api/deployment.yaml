@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: payments-api
-          image: fcg/payments-api:latest
+          image: acrfiapyuri.azurecr.io/payments-api:IMAGE_TAG
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -24,6 +24,9 @@ spec:
                 name: payments-config
             - secretRef:
                 name: payments-secret
+          resources:
+            requests: { memory: 192Mi, cpu: 100m }
+            limits: { memory: 512Mi }
           readinessProbe:
             tcpSocket:
               port: 8080
@@ -32,5 +35,6 @@ spec:
           livenessProbe:
             tcpSocket:
               port: 8080
-            initialDelaySeconds: 20
+            initialDelaySeconds: 45
             periodSeconds: 15
+            failureThreshold: 8
