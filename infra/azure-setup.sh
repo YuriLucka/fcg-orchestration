@@ -28,7 +28,7 @@ az acr update -n "$ACR" --sku Basic -o none
 az group create -n "$RG" -l "$LOCATION" -o none
 if ! az aks show -g "$RG" -n "$AKS" -o none 2>/dev/null; then
   az aks create -g "$RG" -n "$AKS" -l "$LOCATION" \
-    --tier free --node-count 1 --node-vm-size Standard_D4as_v5 \
+    --tier free --node-count 1 --node-vm-size Standard_D4as_v4 \
     --max-pods 50 --node-osdisk-size 64 \
     --auto-upgrade-channel none --node-os-upgrade-channel None \
     --attach-acr "$ACR" --generate-ssh-keys -o none

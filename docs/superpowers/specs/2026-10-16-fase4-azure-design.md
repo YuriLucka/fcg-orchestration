@@ -17,7 +17,7 @@ Entrega = vídeo de até 25 min + repositórios públicos + relatório. O profes
 ## Restrições da conta
 
 - Azure Free Trial: crédito ~US$190, expira ~2026-11-08, spending limit ligado.
-- Quota eastus: 4 vCPU no total. Série B indisponível para AKS. `Standard_D4as_v5` liberado.
+- Quota eastus: 4 vCPU no total. Série B indisponível para AKS. `Standard_D4as_v4` liberado.
 - 3 IPs públicos (usamos 2).
 - Elastic Cloud: trial direto em cloud.elastic.co (14 dias; Marketplace da Azure não aceita crédito do trial).
 
@@ -26,7 +26,7 @@ Entrega = vídeo de até 25 min + repositórios públicos + relatório. O profes
 **Recursos**
 - ACR existente `acrfiapyuri` (eastus), rebaixado para SKU Basic.
 - Resource group `rg-fcg` (eastus) com AKS `aks-fcg`:
-  `--tier free --node-count 1 --node-vm-size Standard_D4as_v5 --max-pods 50 --node-osdisk-size 64 --auto-upgrade-channel none --node-os-upgrade-channel None --attach-acr acrfiapyuri`
+  `--tier free --node-count 1 --node-vm-size Standard_D4as_v4 --max-pods 50 --node-osdisk-size 64 --auto-upgrade-channel none --node-os-upgrade-channel None --attach-acr acrfiapyuri`
 - Sem Container Insights/monitoring addon.
 
 **Script versionado** `infra/azure-setup.sh` (bash, idempotente onde possível): cria RG/AKS, liga ao ACR, faz build+push das 3 imagens com tag `sha-<commit>`, cria os Secrets a partir de `.env` local (gitignored), aplica os manifests e imprime o IP público do Kong. `infra/azure-teardown.sh` apaga o RG.

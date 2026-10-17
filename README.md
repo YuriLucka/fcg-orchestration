@@ -46,7 +46,7 @@ GitHub Actions (users-api, catalog-api): test -> docker build -> push ACR -> kub
 | Recurso | Nome | Observação |
 |---|---|---|
 | Resource group | `rg-fcg` (eastus) | apagar com `./infra/azure-teardown.sh` |
-| Kubernetes gerenciado | AKS `aks-fcg` | tier Free, 1 nó `Standard_D4as_v5`, sem auto-upgrade |
+| Kubernetes gerenciado | AKS `aks-fcg` | tier Free, 1 nó `Standard_D4as_v4`, sem auto-upgrade |
 | Registry privado | ACR `acrfiapyuri` | SKU Basic, ligado ao AKS (`--attach-acr`) |
 | Exposição | Service `kong` tipo `LoadBalancer` | único IP público |
 | Busca | Elastic Cloud (Hosted, Azure East US) | endpoint + API key |
