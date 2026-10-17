@@ -24,8 +24,8 @@ Grupo 4 · 4 blocos, um por integrante. Tempos são alvo; o total precisa ficar 
 
 ## Bloco 2 — Pedro (05:00–11:00): segredos e CI/CD com live deploy
 
-1. Zero credenciais: abrir `k8s/` (sem `secret.yaml`, sem senha), `appsettings.json` sem `SecretKey`, `.env.example`, `kong/kong.yml` com `${JWT_SECRET}`. Mostrar GitHub → Settings → Secrets do `fcg-catalog-api` (só os nomes).
-2. Explicar `.github/workflows/ci-cd.yml`: test → build com tag do commit → push ACR → Secret → `kubectl apply` → `rollout status`; `maxSurge: 1` / `maxUnavailable: 0` no `k8s/deployment.yaml`.
+1. Zero credenciais: abrir `k8s/` (sem `secret.yaml`, sem senha), `appsettings.json` sem `SecretKey`, `.env.example`, `kong/kong.yml` com `${JWT_SECRET}`. Mostrar `kubectl get secrets -n fcg` (os Secrets existem no cluster, criados pelo `infra/azure-setup.sh` a partir do `.env`) e, no GitHub, que o único secret da pipeline é `AZURE_CREDENTIALS`.
+2. Explicar `.github/workflows/ci-cd.yml`: test → build com tag do commit → push ACR → `kubectl apply` → `rollout status`; `maxSurge: 1` / `maxUnavailable: 0` e `preStop` no `k8s/deployment.yaml`.
 3. **Live deploy:**
    - Em um terminal: `while true; do curl -s -o /dev/null -w "%{http_code} " -X POST http://$IP/api/Auth/login -H "content-type: application/json" -d '{}'; sleep 0.5; done`
    - Fazer a mudança visível no `fcg-users-api`, `git commit` e `git push` na `main`.

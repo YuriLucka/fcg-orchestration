@@ -3,7 +3,7 @@
 # Pré-requisitos: az login --tenant <tenant>; docker; kubectl; envsubst; repos irmãos clonados em ../
 # Idempotente: rodar de novo reconstrói as imagens, recria os Secrets e reaplica os manifests.
 set -euo pipefail
-export MSYS_NO_PATHCONV=1
+# Não usar MSYS_NO_PATHCONV: no Git Bash os caminhos /c/... e /tmp/... precisam ser convertidos para docker/kubectl.
 
 RG=rg-fcg
 LOCATION=eastus
@@ -12,12 +12,16 @@ ACR=acrfiapyuri
 NS=fcg
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPOS="$(cd "$ROOT/.." && pwd)"
-TAG="setup-$(date +%Y%m%d%H%M)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 set -a; source "$ROOT/.env"; set +a
 : "${MSSQL_SA_PASSWORD:?}" "${JWT_SECRET:?}" "${RABBIT_USER:?}" "${RABBIT_PASS:?}" "${ES_URL:?}"
+if [[ "$ES_URL" == *"elasticsearch:9200"* || -z "${ES_APIKEY:-}" ]] && [[ "${ALLOW_NO_ES:-}" != "1" ]]; then
+  echo "ERRO: ES_URL/ES_APIKEY apontam para o Elasticsearch local. Na nuvem use o endpoint e a API key do Elastic Cloud." >&2
+  echo "      (para subir sem busca por enquanto: ALLOW_NO_ES=1 ./infra/azure-setup.sh — /api/Game/search responderá 503)" >&2
+  exit 1
+fi
 
 echo "== Infra"
 az acr update -n "$ACR" --sku Basic -o none
@@ -31,10 +35,12 @@ if ! az aks show -g "$RG" -n "$AKS" -o none 2>/dev/null; then
 fi
 az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
 
-echo "== Imagens ($TAG)"
+echo "== Imagens (tag = sha-<commit> de cada repo)"
 az acr login -n "$ACR"
+declare -A TAGS
 for api in users catalog payments; do
-  img="$ACR.azurecr.io/$api-api:$TAG"
+  TAGS[$api]="sha-$(git -C "$REPOS/fcg-$api-api" rev-parse --short=7 HEAD)"
+  img="$ACR.azurecr.io/$api-api:${TAGS[$api]}"
   docker build -t "$img" "$REPOS/fcg-$api-api"
   docker push "$img"
 done
@@ -64,18 +70,23 @@ envsubst '${JWT_SECRET}' < "$ROOT/kong/kong.yml" \
 apply_secret kong-config --from-file=kong.yml="$TMP/kong.yml"
 
 echo "== Manifests"
+# Deployments que já existiam antes deste apply (só esses precisam de restart para reler Secrets).
+EXISTING="$(kubectl -n "$NS" get deploy -o name 2>/dev/null || true)"
 for f in users-db.yaml catalog-db.yaml mongodb.yaml redis.yaml rabbitmq.yaml kong/deployment.yaml kong/service.yaml \
          payments-api/configmap.yaml payments-api/service.yaml; do
   kubectl apply -f "$ROOT/k8s/$f"
 done
-sed "s/IMAGE_TAG/$TAG/" "$ROOT/k8s/payments-api/deployment.yaml" | kubectl apply -f -
+sed "s/IMAGE_TAG/${TAGS[payments]}/" "$ROOT/k8s/payments-api/deployment.yaml" | kubectl apply -f -
 for api in users catalog; do
   dir="$REPOS/fcg-$api-api/k8s"
   kubectl apply -f "$dir/configmap.yaml" -f "$dir/service.yaml"
-  sed "s/IMAGE_TAG/$TAG/" "$dir/deployment.yaml" | kubectl apply -f -
+  sed "s/IMAGE_TAG/${TAGS[$api]}/" "$dir/deployment.yaml" | kubectl apply -f -
 done
-# Secrets/kong-config podem ter mudado: reinicia quem lê na subida.
-kubectl -n "$NS" rollout restart deployment/kong deployment/users-api deployment/catalog-api deployment/payments-api
+# Secrets/kong-config podem ter mudado: reinicia só o que já existia (na 1a execução os pods acabaram de nascer;
+# um restart agora rodaria duas migrações/seeds em paralelo contra o banco novo).
+for d in kong users-api catalog-api payments-api; do
+  if grep -qx "deployment.apps/$d" <<< "$EXISTING"; then kubectl -n "$NS" rollout restart deployment/$d; fi
+done
 
 echo "== Aguardando"
 for d in users-db catalog-db mongodb redis rabbitmq users-api catalog-api payments-api kong; do

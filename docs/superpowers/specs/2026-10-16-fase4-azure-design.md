@@ -94,10 +94,10 @@ Arquivo `.github/workflows/ci-cd.yml`:
   1. `azure/login@v2` com `AZURE_CREDENTIALS` (service principal com Contributor no `rg-fcg` + AcrPush no ACR).
   2. `az acr login`; `docker build` + `docker push` com tag `sha-<7 chars>`.
   3. `azure/aks-set-context@v4`.
-  4. Secret da API via `kubectl create secret --dry-run | apply` (antes do deploy).
+  4. (removido na revisão final: os Secrets da aplicação são criados só pelo `infra/azure-setup.sh` a partir do `.env`, fonte única — evita divergência entre `.env` e GitHub Secrets.)
   5. `sed` da imagem em `k8s/deployment.yaml` + `kubectl apply -f k8s/` → manifest de `main` + imagem do commit = produção.
   6. `kubectl rollout status --timeout=300s`.
-- GitHub Secrets: `AZURE_CREDENTIALS`, `DB_CONN`, `JWT_SECRET`, `RABBIT_USER`, `RABBIT_PASS`; catalog também `MONGO_CONN`, `REDIS_CONN`, `ES_URL`, `ES_APIKEY`.
+- GitHub Secret: só `AZURE_CREDENTIALS`.
 
 ## 5. Testes
 

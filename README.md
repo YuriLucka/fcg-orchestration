@@ -54,10 +54,16 @@ GitHub Actions (users-api, catalog-api): test -> docker build -> push ACR -> kub
 ### Subir na Azure
 
 ```bash
-cp .env.example .env            # preencher com valores novos (ver comentários no arquivo)
+cp .env.example .env            # preencher com valores novos; ES_URL/ES_APIKEY = endpoint e API key do Elastic Cloud
 az login --tenant <tenant-id>
-./infra/azure-setup.sh          # cria RG/AKS, build+push das 3 imagens, Secrets, manifests; imprime o IP do Kong
+./infra/azure-setup.sh          # cria RG/AKS, build+push das 3 imagens (tag sha-<commit>), Secrets, manifests; imprime o IP do Kong
 ```
+
+O script recusa rodar com o `ES_URL` local (`http://elasticsearch:9200`). Para
+subir antes de ter o Elastic Cloud: `ALLOW_NO_ES=1 ./infra/azure-setup.sh`
+(a busca responde `503` até o `.env` ser atualizado e o script rodar de novo).
+O `.env` é a fonte única dos valores sensíveis: rodar o script de novo recria
+os Kubernetes Secrets e reinicia os pods que já existiam.
 
 Para economizar crédito entre sessões: `az aks stop -g rg-fcg -n aks-fcg` /
 `az aks start -g rg-fcg -n aks-fcg` (esperar 15-30 min entre os dois). Para
@@ -69,25 +75,24 @@ apagar tudo: `./infra/azure-teardown.sh`.
 
 - `pull_request` → `dotnet test`.
 - `push` em `main` → `dotnet test` → `docker build` com tag `sha-<commit>` →
-  push no ACR → atualiza o Secret da API → `kubectl apply -f k8s/` com a imagem
-  do commit → `kubectl rollout status`. O código em `main` é o que está em
+  push no ACR → `kubectl apply -f k8s/` com a imagem do commit →
+  `kubectl rollout status`. O código em `main` é o que está em
   produção (manifest versionado + imagem do commit).
-- Rolling update sem downtime: `maxSurge: 1`, `maxUnavailable: 0` e readiness
-  probe — o pod novo só recebe tráfego quando está pronto.
+- Rolling update sem downtime: `maxSurge: 1`, `maxUnavailable: 0`, readiness
+  probe (o pod novo só recebe tráfego quando está pronto) e `preStop` de 10 s
+  (o pod antigo sai do balanceamento antes de parar).
 
-GitHub Secrets por repositório:
-
-| Secret | users-api | catalog-api |
-|---|---|---|
-| `AZURE_CREDENTIALS` (service principal, Contributor no `rg-fcg` + AcrPush) | x | x |
-| `DB_CONN`, `JWT_SECRET`, `RABBIT_USER`, `RABBIT_PASS` | x | x |
-| `MONGO_CONN`, `REDIS_CONN`, `ES_URL`, `ES_APIKEY` | | x |
+Único GitHub Secret (nos dois repositórios): `AZURE_CREDENTIALS` — JSON do
+service principal com `Contributor` no `rg-fcg` e `AcrPush` no ACR. As
+credenciais da aplicação não passam pela pipeline: ficam nos Kubernetes Secrets
+criados pelo `infra/azure-setup.sh` a partir do `.env`, e os pods novos os
+leem na subida.
 
 ### Zero credenciais no código
 
 Nenhuma senha, chave ou string de conexão está versionada (código ou YAML).
-Os valores vêm do `.env` local (compose e `infra/azure-setup.sh`) ou dos GitHub
-Secrets (pipeline) e chegam aos pods como Kubernetes Secrets criados com
+Os valores vêm do `.env` local (compose e `infra/azure-setup.sh`) e chegam aos
+pods como Kubernetes Secrets criados com
 `kubectl create secret ... --dry-run=client -o yaml | kubectl apply -f -`.
 As APIs falham na subida se `JwtSettings:SecretKey` ou `RabbitMq:User/Pass`
 não forem informados. O segredo do JWT do Kong é injetado no `kong/kong.yml`
@@ -420,7 +425,7 @@ HTTP que precise ser acessado externamente.
 | `Elasticsearch__ApiKey`                 | catalog-api              | API key do Elastic Cloud (vazio no local)  |
 | `Elasticsearch__IndexName`              | catalog-api              | Índice dos jogos (`games`)                 |
 
-Valores sensíveis: `.env` (local) ou GitHub Secrets → Kubernetes Secrets (AKS).
+Valores sensíveis: `.env` → variáveis do compose (local) ou Kubernetes Secrets (AKS, via `infra/azure-setup.sh`).
 
 ---
 
