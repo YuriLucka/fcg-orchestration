@@ -41,7 +41,10 @@ Grupo 4 · 4 blocos, um por integrante. Tempos são alvo; o total precisa ficar 
    - Explicar: indexação no create/update/delete do `GameService`, reenvio completo na subida, busca não toca no SQL, `503` se o ES cair.
    - Mostrar o deployment no Elastic Cloud (região Azure East US) e o índice `games`.
 2. Cache (Redis):
-   - `for i in 1 2; do curl -s -o /dev/null -w "%{time_total}s\n" -H "Authorization: Bearer $TOKEN" http://$IP/api/Game; done` → 1ª chamada (SQL) mais lenta que a 2ª (Redis).
+   - Limpar a chave e medir de dentro do cluster (pela internet a latência de rede esconde o ganho):
+     `kubectl exec -n fcg deploy/redis -- redis-cli DEL catalog:games:all`
+     `kubectl run curl-cache -n fcg --rm -i --restart=Never --image=curlimages/curl:8.10.1 --command -- sh -c "for i in 1 2 3; do curl -s -o /dev/null -w '%{time_total}s\n' -H 'Authorization: Bearer $TOKEN' http://catalog-api/api/Game; done"`
+     → 1ª chamada (SQL, ~6 ms) bem mais lenta que as seguintes (Redis, ~2 ms). No Git Bash, prefixar com `MSYS_NO_PATHCONV=1`.
    - `kubectl exec -n fcg deploy/redis -- redis-cli KEYS 'catalog:*'` e `TTL` da chave `catalog:games:all`.
    - Explicar cache-aside com TTL de 5 min e invalidação no create/update/delete.
 
