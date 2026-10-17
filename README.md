@@ -1,18 +1,114 @@
-# FIAP Cloud Games — Guia de Orquestração (Fase 3)
+# FIAP Cloud Games — Guia de Orquestração (Fase 4)
 
 Este repositório é o **guia central** da entrega: reúne toda a orquestração da
 solução de microsserviços FCG (Fase 1 monólito → Fase 2 microsserviços → Fase 3
-gateway, observabilidade, persistência poliglota e serverless) e documenta como
-subir a stack completa do zero.
+gateway, observabilidade, persistência poliglota e serverless → Fase 4 nuvem
+gerenciada, CI/CD, busca avançada e gestão de segredos) e documenta como subir a
+stack completa do zero.
 
+- `infra/` — scripts `az` que criam o AKS na Azure e fazem o deploy (Fase 4).
+- `k8s/` — manifestos Kubernetes da infraestrutura (namespace, bancos, filas,
+  Kong, payments-api e observabilidade). Os manifestos de `users-api` e
+  `catalog-api` ficam no `k8s/` de cada repositório, que é o que a pipeline de
+  CI/CD aplica.
 - `docker-compose.yml` — stack completa para desenvolvimento/demonstração local.
-- `k8s/` — manifestos Kubernetes (namespace, gateway, observabilidade, bancos de
-  dados, filas e os 3 serviços .NET). Cada serviço também possui seu próprio
-  `k8s/` com Deployment, Service, ConfigMap e Secret, replicado aqui para deploy
-  a partir de um único lugar.
-- `kong/` — configuração declarativa do API Gateway (compose).
+- `.env.example` — lista de variáveis sensíveis (copiar para `.env`, nunca versionado).
+- `kong/` — configuração declarativa do API Gateway (template: o segredo do JWT
+  é injetado na hora do deploy).
 - `prometheus/`, `grafana/` — configuração e dashboard da observabilidade.
-- `rabbitmq/` — topologia de filas/exchanges pré-declarada (definitions.json).
+- `rabbitmq/` — topologia de filas/exchanges (definitions.json, sem usuários).
+
+---
+
+## Fase 4 — Azure (AKS + ACR + Elastic Cloud + GitHub Actions)
+
+```
+Internet
+   |
+   v
+Azure Load Balancer (IP público) --> Kong (Service LoadBalancer, porta 80)
+                                        |
+                       +----------------+----------------+
+                       v                                 v
+                  users-api                         catalog-api ----> Elastic Cloud (busca /api/Game/search)
+                       |                            |    |    \
+                  SQL Server users        SQL Server  MongoDB  Redis
+                       \                    catalog      |
+                        +-----> RabbitMQ <---------------+
+                                    ^
+                                    |
+                               payments-api
+                    (tudo acima roda no AKS, namespace fcg)
+
+GitHub Actions (users-api, catalog-api): test -> docker build -> push ACR -> kubectl apply (rolling update)
+```
+
+| Recurso | Nome | Observação |
+|---|---|---|
+| Resource group | `rg-fcg` (eastus) | apagar com `./infra/azure-teardown.sh` |
+| Kubernetes gerenciado | AKS `aks-fcg` | tier Free, 1 nó `Standard_D4as_v5`, sem auto-upgrade |
+| Registry privado | ACR `acrfiapyuri` | SKU Basic, ligado ao AKS (`--attach-acr`) |
+| Exposição | Service `kong` tipo `LoadBalancer` | único IP público |
+| Busca | Elastic Cloud (Hosted, Azure East US) | endpoint + API key |
+
+### Subir na Azure
+
+```bash
+cp .env.example .env            # preencher com valores novos (ver comentários no arquivo)
+az login --tenant <tenant-id>
+./infra/azure-setup.sh          # cria RG/AKS, build+push das 3 imagens, Secrets, manifests; imprime o IP do Kong
+```
+
+Para economizar crédito entre sessões: `az aks stop -g rg-fcg -n aks-fcg` /
+`az aks start -g rg-fcg -n aks-fcg` (esperar 15-30 min entre os dois). Para
+apagar tudo: `./infra/azure-teardown.sh`.
+
+### CI/CD
+
+`fcg-users-api` e `fcg-catalog-api` têm `.github/workflows/ci-cd.yml`:
+
+- `pull_request` → `dotnet test`.
+- `push` em `main` → `dotnet test` → `docker build` com tag `sha-<commit>` →
+  push no ACR → atualiza o Secret da API → `kubectl apply -f k8s/` com a imagem
+  do commit → `kubectl rollout status`. O código em `main` é o que está em
+  produção (manifest versionado + imagem do commit).
+- Rolling update sem downtime: `maxSurge: 1`, `maxUnavailable: 0` e readiness
+  probe — o pod novo só recebe tráfego quando está pronto.
+
+GitHub Secrets por repositório:
+
+| Secret | users-api | catalog-api |
+|---|---|---|
+| `AZURE_CREDENTIALS` (service principal, Contributor no `rg-fcg` + AcrPush) | x | x |
+| `DB_CONN`, `JWT_SECRET`, `RABBIT_USER`, `RABBIT_PASS` | x | x |
+| `MONGO_CONN`, `REDIS_CONN`, `ES_URL`, `ES_APIKEY` | | x |
+
+### Zero credenciais no código
+
+Nenhuma senha, chave ou string de conexão está versionada (código ou YAML).
+Os valores vêm do `.env` local (compose e `infra/azure-setup.sh`) ou dos GitHub
+Secrets (pipeline) e chegam aos pods como Kubernetes Secrets criados com
+`kubectl create secret ... --dry-run=client -o yaml | kubectl apply -f -`.
+As APIs falham na subida se `JwtSettings:SecretKey` ou `RabbitMq:User/Pass`
+não forem informados. O segredo do JWT do Kong é injetado no `kong/kong.yml`
+por `envsubst`.
+
+### Busca avançada (Elasticsearch)
+
+`GET /api/Game/search?q=<termo>` (JWT) no `catalog-api`: `multi_match` em
+título (peso 3) e descrição, `fuzziness: AUTO` (tolera erro de digitação),
+ordenado por relevância. A busca consulta só o Elasticsearch, nunca o SQL.
+O índice `games` é atualizado em todo create/update/delete de jogo e
+reenviado por completo na subida da API. Se o Elasticsearch estiver fora, a
+busca responde `503` e o CRUD continua funcionando.
+
+### O que ficou fora da nuvem nesta fase
+
+O enunciado da Fase 4 não pede, então **Prometheus, Grafana, Loki, Azurite e a
+`fcg-notifications-function` continuam como entregues na Fase 3** (rodando no
+compose local). No AKS não há consumidor das filas `welcome-email` e
+`purchase-confirmation`: as mensagens acumulam sem afetar nenhum fluxo. Os
+bancos usam `emptyDir`; o seed recria jogos e usuários a cada subida.
 
 ---
 
@@ -141,8 +237,10 @@ Ambos usam drivers oficiais (`MongoDB.Driver` e `StackExchange.Redis`) no
 Kong roda em modo **DB-less** (config 100% declarativa, sem banco próprio),
 com a configuração versionada neste repositório:
 
-- Docker Compose: `kong/kong.yml`
-- Kubernetes: `k8s/kong/configmap.yaml` (tipo `Secret`, já que embute o segredo do JWT)
+- `kong/kong.yml` (fonte única). O campo `secret` do consumer JWT é o
+  placeholder `${JWT_SECRET}`: no compose o serviço `kong-config` renderiza o
+  arquivo com `envsubst`; no AKS o `infra/azure-setup.sh` faz o mesmo e cria o
+  Secret `kong-config`.
 
 ### Tabela de rotas
 
@@ -154,9 +252,9 @@ com a configuração versionada neste repositório:
 | `/api/purchases`    | catalog-api     | JWT obrigatório — **atenção:** minúsculo e plural, foge do padrão PascalCase singular das demais rotas |
 | `/api/Review`       | catalog-api     | JWT obrigatório                                 |
 
-Gateway em `http://localhost:8000` (proxy). A Admin API (`8001`) não é mais
-publicada no host — fica acessível só de dentro da rede do container
-(`127.0.0.1:8001`), para evitar reconfiguração não autenticada do gateway.
+Gateway em `http://localhost:8000` (compose) ou `http://<IP público>` (AKS).
+A Admin API não é publicada: no compose escuta só em `127.0.0.1:8001` dentro do
+container; no AKS está desligada (`KONG_ADMIN_LISTEN=off`).
 
 ---
 
@@ -176,10 +274,8 @@ alinhado ao modelo serverless.
 func start
 ```
 
-- Consome as mesmas filas que a stack já declara via
-  `rabbitmq/definitions.json` (compose) / `k8s/rabbitmq.yaml` (k8s) — não é
-  necessário nenhum outro serviço para a function existir, a topologia de
-  filas/exchanges já está pronta quando o RabbitMQ sobe.
+- Consome as filas declaradas em `rabbitmq/definitions.json`, importado pelo
+  serviço `rabbitmq-init` do compose assim que o RabbitMQ fica saudável.
 - Precisa do Azurite (`azurite`, portas `10000`-`10002`) rodando — é o storage
   local exigido pelo host de Functions.
 
@@ -219,6 +315,7 @@ Estrutura esperada:
 
 ```bash
 # A partir da raiz do repositório fcg-orchestration
+cp .env.example .env     # preencher os valores (o .env não é versionado)
 docker compose up --build
 ```
 
@@ -229,11 +326,12 @@ demoram mais — até ~1 min no primeiro start). Acesse:
 |-----------------------------------|----------------------------------------------|
 | API Gateway (Kong)                | http://localhost:8000/api/...                |
 | Prometheus                        | http://localhost:9090                        |
-| Grafana                           | http://localhost:3000 (login `admin`/`admin`, ou acesso anônimo habilitado) |
+| Grafana                           | http://localhost:3000 (login `admin` / `GRAFANA_ADMIN_PASSWORD` do `.env`, ou acesso anônimo habilitado) |
 | Loki                              | via Grafana → Explore (datasource já provisionado; não é acessado direto) |
 | mongo-express                     | http://localhost:8081                        |
 | redis-commander                   | http://localhost:8082                        |
-| RabbitMQ Management                | http://localhost:15672 (`guest`/`guest`)     |
+| RabbitMQ Management                | http://localhost:15672 (`RABBIT_USER`/`RABBIT_PASS` do `.env`) |
+| Elasticsearch                      | http://localhost:9200 (sem autenticação, só local) |
 
 > **Atenção:** `users-api` e `catalog-api` **não publicam mais porta no host**
 > (desde a introdução do Kong). Todo acesso externo passa por
@@ -262,81 +360,27 @@ docker compose down -v
 
 ## Como fazer deploy no Kubernetes
 
-**Pré-requisitos:** `kubectl` configurado, cluster local (Kind ou Docker
-Desktop Kubernetes).
-
-### 1. Construir as imagens
-
-Com os repositórios de serviços .NET clonados lado a lado (ver pré-requisito
-acima — não inclui o `fcg-notifications-function`, que não sobe em container),
-rode a partir do `fcg-orchestration`:
+O deploy Kubernetes oficial desta fase é o **AKS** — ver
+[Fase 4 — Azure](#fase-4--azure-aks--acr--elastic-cloud--github-actions).
+Os manifestos de `k8s/` apontam para imagens do ACR
+(`acrfiapyuri.azurecr.io/...:IMAGE_TAG`) e dependem dos Secrets criados pelo
+`infra/azure-setup.sh`. Para desenvolvimento local use o Docker Compose.
 
 ```bash
-docker build -t fcg/users-api:latest    ../fcg-users-api
-docker build -t fcg/catalog-api:latest  ../fcg-catalog-api
-docker build -t fcg/payments-api:latest ../fcg-payments-api
+kubectl get pods -n fcg                       # todos Running
+kubectl get svc kong -n fcg                   # EXTERNAL-IP = IP público do gateway
+kubectl rollout history deployment/users-api -n fcg
 ```
-
-### 2. Carregar imagens no cluster (apenas Kind)
-
-```bash
-kind load docker-image fcg/users-api:latest
-kind load docker-image fcg/catalog-api:latest
-kind load docker-image fcg/payments-api:latest
-```
-
-> Com Docker Desktop Kubernetes, as imagens do daemon local já estão disponíveis — pule este passo.
-
-### 3. Aplicar os manifestos
-
-Todos os manifestos (namespace, gateway, observabilidade, bancos de dados,
-filas e os 3 serviços) estão neste repositório, sob `k8s/`. Aplique o
-namespace primeiro e depois o restante de forma recursiva:
-
-```bash
-# A partir da raiz do repositório fcg-orchestration
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -R -f k8s/
-```
-
-`kubectl apply -R -f k8s/` já aplica Kong, Prometheus, Grafana, Loki, MongoDB e
-Redis automaticamente, por estarem dentro de `k8s/`. O RabbitMQ
-(`k8s/rabbitmq.yaml`) sobe com a topologia de filas
-(`welcome-email`/`purchase-confirmation`) pré-declarada via ConfigMap — não
-depende de nenhum container de notificação para existir; a
-`fcg-notifications-function`, rodando local, consome essas filas diretamente
-do RabbitMQ exposto pelo cluster.
-
-> Os manifestos de cada serviço também existem no `/k8s` do repositório
-> individual correspondente (Deployment, Service, ConfigMap e Secret). Para o
-> deploy completo, use a pasta `k8s/` deste repositório de orquestração.
-
-### 4. Verificar os pods
-
-```bash
-kubectl get pods -n fcg
-# Todos devem aparecer como Running
-```
-
-### 5. Acessar os serviços (port-forward)
-
-```bash
-kubectl port-forward svc/kong       -n fcg 8000:8000
-kubectl port-forward svc/grafana    -n fcg 3000:3000
-kubectl port-forward svc/prometheus -n fcg 9090:9090
-```
-
-Todo acesso externo aos serviços de negócio (`users-api`, `catalog-api`) passa
-pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 
 ---
 
 ## Tabela de Portas
 
-| Serviço              | Porta Docker | Porta K8s (port-forward) | Porta interna (container) |
+| Serviço              | Porta Docker | AKS                       | Porta interna (container) |
 |-----------------------|-------------|---------------------------|-----------------------------|
-| Kong (proxy)          | 8000        | 8000                      | 8000                        |
-| Kong (admin API)      | não publicada (127.0.0.1 no container) | — | 8001            |
+| Kong (proxy)          | 8000        | 80 (IP público do LB)     | 8000                        |
+| Kong (admin API)      | não publicada (127.0.0.1 no container) | desligada | 8001            |
+| Elasticsearch         | 9200 (127.0.0.1) | Elastic Cloud (externo) | 9200                     |
 | users-api             | —* (via Kong)| —* (via Kong)             | 8080                        |
 | catalog-api           | —* (via Kong)| —* (via Kong)             | 8080                        |
 | payments-api          | —† (sem rota HTTP)| —† (sem rota HTTP)       | 8080                        |
@@ -353,7 +397,7 @@ pelo `kong`, igual ao compose — não faça port-forward direto para eles.
 | users-db (SQL)        | 1401        | —                         | 1433                        |
 | catalog-db (SQL)      | 1402        | —                         | 1433                        |
 
-\* Não publicadas no host — acesso somente via Kong (`http://localhost:8000/api/...`).
+\* Não publicadas no host — acesso somente via Kong. Prometheus, Grafana e Loki não sobem no AKS (ver "O que ficou fora da nuvem").
 † `payments-api` não publica porta no host nem tem rota no Kong — é 100%
 orientado a eventos (consome/produz apenas via RabbitMQ), sem nenhum fluxo
 HTTP que precise ser acessado externamente.
@@ -366,31 +410,31 @@ HTTP que precise ser acessado externamente.
 | `MongoSettings__ConnectionString`       | catalog-api              | Connection string MongoDB                 |
 | `MongoSettings__Database`               | catalog-api              | Nome do database MongoDB (`fcg_catalog`)  |
 | `RedisSettings__ConnectionString`       | catalog-api              | Endpoint do Redis (cache de `GET /api/Game`) |
-| `JwtSettings__SecretKey`                | users-api, catalog-api   | Chave secreta JWT (≥32 chars)              |
+| `JwtSettings__SecretKey`                | users-api, catalog-api   | Chave secreta JWT (≥32 chars) — `JWT_SECRET` do `.env` |
 | `JwtSettings__Issuer`                   | users-api, catalog-api   | Issuer do token JWT                        |
 | `JwtSettings__Audience`                 | users-api, catalog-api   | Audience do token JWT                      |
 | `RabbitMq__Host`                        | todos os serviços         | Host do RabbitMQ                           |
-| `RabbitMq__User`                        | todos os serviços         | Usuário do RabbitMQ (padrão: guest)        |
-| `RabbitMq__Pass`                         | todos os serviços         | Senha do RabbitMQ (padrão: guest)          |
+| `RabbitMq__User`                        | todos os serviços         | Usuário do RabbitMQ (obrigatório)          |
+| `RabbitMq__Pass`                         | todos os serviços         | Senha do RabbitMQ (obrigatório)            |
+| `Elasticsearch__Url`                    | catalog-api              | Endpoint do Elasticsearch / Elastic Cloud  |
+| `Elasticsearch__ApiKey`                 | catalog-api              | API key do Elastic Cloud (vazio no local)  |
+| `Elasticsearch__IndexName`              | catalog-api              | Índice dos jogos (`games`)                 |
+
+Valores sensíveis: `.env` (local) ou GitHub Secrets → Kubernetes Secrets (AKS).
 
 ---
 
 ### Configs espelhadas entre compose e k8s
 
-Alguns arquivos de configuração existem em duplicidade — uma versão consumida
-pelo Docker Compose e outra, equivalente, inline nos manifestos do
-Kubernetes. Hoje estão sincronizados manualmente (não há geração automática a
-partir de uma fonte única), então **ao editar um lado, atualize o outro**:
-
 | Compose                              | Kubernetes                          |
 |---------------------------------------|--------------------------------------|
-| `kong/kong.yml`                       | `k8s/kong/configmap.yaml` (Secret)   |
+| `kong/kong.yml`                       | o mesmo arquivo, renderizado no Secret `kong-config` pelo `infra/azure-setup.sh` |
 | `prometheus/prometheus.yml`           | `k8s/prometheus/configmap.yaml`      |
-| `rabbitmq/definitions.json`           | chave `definitions.json` em `k8s/rabbitmq.yaml` |
 | `grafana/dashboards/fcg-overview.json`| chave `fcg-overview.json` (minificada) em `k8s/grafana/configmap.yaml` |
 
-Cada um dos 4 arquivos do lado k8s tem um comentário `# ATENÇÃO: espelha ...`
-no topo, lembrando do par correspondente.
+`rabbitmq/definitions.json` só existe no compose (topologia usada pela
+function local); no AKS o RabbitMQ sobe com usuário do Secret
+`rabbitmq-secret` e o MassTransit declara a própria topologia.
 
 ---
 

@@ -1458,7 +1458,7 @@ git -C fcg-orchestration commit -m "feat: adiciona Grafana com dashboard provisi
 
 **Interfaces:**
 - Consumes: rotas `api/Auth`, `api/User` (users-api), `api/Game`, `api/purchases`, `api/Review` (catalog-api) — todas já existentes ou criadas na Task 3. **`api/purchases` é minúsculo e plural de propósito** — `PurchaseController` tem `[Route("api/purchases")]` explícito (não usa o token `[controller]` como os outros), confirmado lendo `fcg-catalog-api/src/Catalog.API/Controllers/PurchaseController.cs:9`.
-- Consumes: `JwtSettings:Issuer` = `"FiapCloudGames"` e `JwtSettings:SecretKey` = `"fcg-fase2-shared-secret-key-please-change-32+chars"` (já usados por UsersAPI/CatalogAPI, ver `docker-compose.yml` atual) — o Kong precisa da MESMA chave para validar tokens emitidos pela UsersAPI.
+- Consumes: `JwtSettings:Issuer` = `"FiapCloudGames"` e `JwtSettings:SecretKey` = `"<JWT_SECRET>"` (já usados por UsersAPI/CatalogAPI, ver `docker-compose.yml` atual) — o Kong precisa da MESMA chave para validar tokens emitidos pela UsersAPI.
 
 - [ ] **Step 1: Config declarativa do Kong**
 
@@ -1499,7 +1499,7 @@ consumers:
     jwt_secrets:
       - key: "FiapCloudGames"
         algorithm: HS256
-        secret: "fcg-fase2-shared-secret-key-please-change-32+chars"
+        secret: "<JWT_SECRET>"
 ```
 
 > **`strip_path: false` é obrigatório em toda rota** (achado real do implementador da Task 9, descoberto com o Kong rodando): o default do Kong é `strip_path: true`, que remove o prefixo casado antes de encaminhar pro backend — `/api/Auth/login` chegaria no users-api como `/login` e tomaria 404 do próprio ASP.NET. Sem essa linha o gateway não funciona pra nenhuma rota. Como aqui os paths do Kong são exatamente os paths reais dos controllers (não há reescrita de prefixo), o certo é sempre `false`.
@@ -1680,7 +1680,7 @@ data:
         jwt_secrets:
           - key: "FiapCloudGames"
             algorithm: HS256
-            secret: "fcg-fase2-shared-secret-key-please-change-32+chars"
+            secret: "<JWT_SECRET>"
 ```
 
 - [ ] **Step 2: Deployment + Service**
