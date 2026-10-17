@@ -1,17 +1,6 @@
 {
   "rabbit_version": "3.13.0",
-  "users": [
-    {
-      "name": "guest",
-      "password_hash": "DCGILKCMPLvOIjX54EVjXBkcXE0sw8FwyPM46v/sGjml9nbb",
-      "hashing_algorithm": "rabbit_password_hashing_sha256",
-      "tags": ["administrator"]
-    }
-  ],
   "vhosts": [{ "name": "/" }],
-  "permissions": [
-    { "user": "guest", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
-  ],
   "queues": [
     { "name": "welcome-email", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
     { "name": "purchase-confirmation", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }

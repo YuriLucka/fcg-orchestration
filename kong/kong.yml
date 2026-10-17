@@ -1,3 +1,4 @@
+# Template: ${JWT_SECRET} é substituído por envsubst (compose: serviço kong-config; AKS: infra/azure-setup.sh).
 _format_version: "3.0"
 
 services:
@@ -36,4 +37,4 @@ consumers:
     jwt_secrets:
       - key: "FiapCloudGames"
         algorithm: HS256
-        secret: "fcg-fase2-shared-secret-key-please-change-32+chars"
+        secret: "${JWT_SECRET}"

@@ -3,11 +3,12 @@ services:
     image: rabbitmq:3-management
     user: "0"
     environment:
-      RABBITMQ_ERLANG_COOKIE: "fcg-secret-cookie"
+      RABBITMQ_ERLANG_COOKIE: ${RABBIT_ERLANG_COOKIE}
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS}
     ports: ["5672:5672", "15672:15672"]
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
-      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
@@ -15,14 +16,24 @@ services:
       timeout: 5s
       retries: 10
 
+  # Importa a topologia (filas/exchanges usadas pela Function) via API de gerenciamento.
+  rabbitmq-init:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    volumes:
+      - ./rabbitmq/definitions.json:/definitions.json:ro
+    command: ["-fsS", "--retry", "40", "--retry-all-errors", "--retry-delay", "3", "-u", "${RABBIT_USER}:${RABBIT_PASS}", "-H", "content-type:application/json", "-X", "POST", "--data-binary", "@/definitions.json", "http://rabbitmq:15672/api/definitions"]
+    restart: "no"
+
   users-db:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Your_strong_Pass1"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
     ports: ["1401:1433"]
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Your_strong_Pass1' -Q 'SELECT 1' -b -No 2>/dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_strong_Pass1' -Q 'SELECT 1' -b 2>/dev/null"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P $$MSSQL_SA_PASSWORD -Q 'SELECT 1' -b -No 2>/dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P $$MSSQL_SA_PASSWORD -Q 'SELECT 1' -b 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -32,10 +43,10 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Your_strong_Pass1"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
     ports: ["1402:1433"]
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Your_strong_Pass1' -Q 'SELECT 1' -b -No 2>/dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'Your_strong_Pass1' -Q 'SELECT 1' -b 2>/dev/null"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P $$MSSQL_SA_PASSWORD -Q 'SELECT 1' -b -No 2>/dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P $$MSSQL_SA_PASSWORD -Q 'SELECT 1' -b 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -86,8 +97,10 @@ services:
       users-db: { condition: service_healthy }
     environment:
       RabbitMq__Host: rabbitmq
-      ConnectionStrings__DefaultConnection: "Server=users-db;Database=users;User Id=sa;Password=Your_strong_Pass1;TrustServerCertificate=true"
-      JwtSettings__SecretKey: "fcg-fase2-shared-secret-key-please-change-32+chars"
+      RabbitMq__User: ${RABBIT_USER}
+      RabbitMq__Pass: ${RABBIT_PASS}
+      ConnectionStrings__DefaultConnection: "Server=users-db;Database=users;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=true"
+      JwtSettings__SecretKey: ${JWT_SECRET}
       JwtSettings__Issuer: "FiapCloudGames"
       JwtSettings__Audience: "FiapCloudGames.Client"
       ASPNETCORE_ENVIRONMENT: Development
@@ -101,13 +114,18 @@ services:
       catalog-db: { condition: service_healthy }
       mongo: { condition: service_healthy }
       redis: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
     environment:
       RabbitMq__Host: rabbitmq
-      ConnectionStrings__DefaultConnection: "Server=catalog-db;Database=catalog;User Id=sa;Password=Your_strong_Pass1;TrustServerCertificate=true"
+      RabbitMq__User: ${RABBIT_USER}
+      RabbitMq__Pass: ${RABBIT_PASS}
+      ConnectionStrings__DefaultConnection: "Server=catalog-db;Database=catalog;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=true"
       MongoSettings__ConnectionString: "mongodb://mongo:27017"
       MongoSettings__Database: "fcg_catalog"
       RedisSettings__ConnectionString: "redis:6379"
-      JwtSettings__SecretKey: "fcg-fase2-shared-secret-key-please-change-32+chars"
+      Elasticsearch__Url: ${ES_URL}
+      Elasticsearch__ApiKey: ${ES_APIKEY}
+      JwtSettings__SecretKey: ${JWT_SECRET}
       JwtSettings__Issuer: "FiapCloudGames"
       JwtSettings__Audience: "FiapCloudGames.Client"
       ASPNETCORE_ENVIRONMENT: Development
@@ -120,6 +138,21 @@ services:
       rabbitmq: { condition: service_healthy }
     environment:
       RabbitMq__Host: rabbitmq
+      RabbitMq__User: ${RABBIT_USER}
+      RabbitMq__Pass: ${RABBIT_PASS}
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["127.0.0.1:9200:9200"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs \"http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   # Storage local exigido pelo host do Azure Functions (fcg-notifications-function).
   # Substitui o container notifications-api (removido: a Function consome as filas
@@ -129,6 +162,17 @@ services:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     ports: ["10000:10000", "10001:10001", "10002:10002"]
 
+  # Renderiza kong/kong.yml substituindo ${JWT_SECRET} (o arquivo versionado não tem o valor).
+  kong-config:
+    image: alpine:3.20
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+    volumes:
+      - ./kong/kong.yml:/in/kong.yml:ro
+      - kong-rendered:/out
+    command: ["sh", "-c", "apk add --no-cache gettext >/dev/null && envsubst '$${JWT_SECRET}' < /in/kong.yml > /out/kong.yml"]
+    restart: "no"
+
   kong:
     image: kong:3.7
     environment:
@@ -137,9 +181,12 @@ services:
       KONG_PROXY_LISTEN: "0.0.0.0:8000"
       KONG_ADMIN_LISTEN: "127.0.0.1:8001"
     volumes:
-      - ./kong/kong.yml:/kong/declarative/kong.yml:ro
+      - kong-rendered:/kong/declarative:ro
     ports: ["8000:8000"]
-    depends_on: [users-api, catalog-api]
+    depends_on:
+      kong-config: { condition: service_completed_successfully }
+      users-api: { condition: service_started }
+      catalog-api: { condition: service_started }
 
   prometheus:
     image: prom/prometheus:v2.55.0
@@ -152,7 +199,7 @@ services:
     image: grafana/grafana:11.2.0
     ports: ["127.0.0.1:3000:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
@@ -167,3 +214,4 @@ services:
 
 volumes:
   rabbitmq-data:
+  kong-rendered:
