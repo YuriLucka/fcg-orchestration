@@ -20,7 +20,7 @@ stack completa do zero.
 
 ---
 
-## Fase 4 — Azure (AKS + ACR + Elastic Cloud + GitHub Actions)
+## Fase 4 — Azure (AKS + ACR + Elastic Cloud + Azure DevOps)
 
 ```
 Internet
@@ -40,7 +40,7 @@ Azure Load Balancer (IP público) --> Kong (Service LoadBalancer, porta 80)
                                payments-api
                     (tudo acima roda no AKS, namespace fcg)
 
-GitHub Actions (users-api, catalog-api): test -> docker build -> push ACR -> kubectl apply (rolling update)
+Azure Pipelines (users-api, catalog-api): test -> docker build -> push ACR -> kubectl apply (rolling update)
 ```
 
 | Recurso | Nome | Observação |
@@ -71,20 +71,29 @@ apagar tudo: `./infra/azure-teardown.sh`.
 
 ### CI/CD
 
-`fcg-users-api` e `fcg-catalog-api` têm `.github/workflows/ci-cd.yml`:
+O CI/CD oficial roda no **Azure DevOps** (organização `yurilucka`, projeto
+`FCG`): os repositórios estão no Azure Repos e são espelhados no GitHub (público)
+— cada `git push` vai para os dois remotos, então o conteúdo é idêntico.
 
-- `pull_request` → `dotnet test`.
-- `push` em `main` → `dotnet test` → `docker build` com tag `sha-<commit>` →
-  push no ACR → `kubectl apply -f k8s/` com a imagem do commit →
-  `kubectl rollout status`. O código em `main` é o que está em
-  produção (manifest versionado + imagem do commit).
+`fcg-users-api` e `fcg-catalog-api` têm `azure-pipelines.yml` (Azure Pipelines):
+
+- Stage **Build e testes**: `dotnet test` com resultados publicados na aba Tests.
+- Stage **Imagem Docker**: `docker build` com tag `sha-<commit>` e push no ACR.
+- Stage **Deploy** (environment `fcg-producao`): `kubectl apply -f k8s/` com a
+  imagem do commit e `kubectl rollout status`. O código em `main` é o que está
+  em produção (manifest versionado + imagem do commit).
+- Autenticação na Azure pela service connection `azure-fcg` (Workload Identity
+  Federation, sem segredo armazenado).
+
+No GitHub, `.github/workflows/ci-cd.yml` roda os mesmos testes a cada push/PR;
+o job de deploy ficou só manual (`workflow_dispatch`) para não haver dois deploys.
 - Rolling update sem downtime: `maxSurge: 1`, `maxUnavailable: 0`, readiness
   probe (o pod novo só recebe tráfego quando está pronto) e `preStop` de 10 s
   (o pod antigo sai do balanceamento antes de parar).
 
-Único GitHub Secret (nos dois repositórios): `AZURE_CREDENTIALS` — JSON do
-service principal com `Contributor` no `rg-fcg` e `AcrPush` no ACR. As
-credenciais da aplicação não passam pela pipeline: ficam nos Kubernetes Secrets
+Permissões: o service principal da service connection tem `Contributor` no
+`rg-fcg` e `AcrPush` no ACR (o GitHub guarda só `AZURE_CREDENTIALS`, usado no
+deploy manual). As credenciais da aplicação não passam pela pipeline: ficam nos Kubernetes Secrets
 criados pelo `infra/azure-setup.sh` a partir do `.env`, e os pods novos os
 leem na subida.
 

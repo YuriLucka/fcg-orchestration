@@ -7,14 +7,14 @@ Grupo 4 · 4 blocos, um por integrante. Tempos são alvo; o total precisa ficar 
 - Cluster ligado: `az aks start -g rg-fcg -n aks-fcg` (se estiver parado) e `kubectl get pods -n fcg` todos `Running`.
 - `IP=$(kubectl -n fcg get svc kong -o jsonpath='{.status.loadBalancer.ingress[0].ip}')`
 - Token: `TOKEN=$(curl -s -X POST http://$IP/api/Auth/login -H "content-type: application/json" -d '{"email":"admin@fcg.com","password":"Admin@123"}' | sed -E 's/.*"accessToken":"([^"]+)".*/\1/')`
-- Abas abertas: Portal Azure (`rg-fcg`, AKS, ACR), GitHub Actions do `fcg-users-api`, VS Code com os repositórios, terminal.
+- Abas abertas: Portal Azure (`rg-fcg`, AKS, ACR), Azure DevOps (`dev.azure.com/yurilucka/FCG`: Repos, Pipelines `fcg-users-api`, Environments `fcg-producao`), VS Code com os repositórios, terminal.
 - Elastic Cloud ativo (trial) e `catalog-api` reiniciado depois de configurar `ES_URL`/`ES_APIKEY`.
 - Escolher a mudança do live deploy (ex.: texto da descrição do Swagger/`ProducesResponseType` ou mensagem de erro de login) e deixar o arquivo aberto, sem salvar.
 
 ## Bloco 1 — Carlos (00:00–05:00): problema e infraestrutura na nuvem
 
 1. Apresentação do grupo e do problema da Fase 4: produção gerenciada, entrega automatizada, performance/latência.
-2. Arquitetura (diagrama do README, seção "Fase 4 — Azure"): Internet → Load Balancer → Kong → APIs → SQL/Mongo/Redis/RabbitMQ no AKS; CatalogAPI → Elastic Cloud; GitHub Actions → ACR → AKS.
+2. Arquitetura (diagrama do README, seção "Fase 4 — Azure"): Internet → Load Balancer → Kong → APIs → SQL/Mongo/Redis/RabbitMQ no AKS; CatalogAPI → Elastic Cloud; Azure Pipelines → ACR → AKS (repos no Azure Repos, espelhados no GitHub público).
 3. Portal Azure:
    - Resource group `rg-fcg` → AKS `aks-fcg` → **Workloads** (pods do namespace `fcg`).
    - ACR `acrfiapyuri` → Repositórios → tags `sha-*` (versionamento das imagens).
@@ -25,11 +25,11 @@ Grupo 4 · 4 blocos, um por integrante. Tempos são alvo; o total precisa ficar 
 ## Bloco 2 — Pedro (05:00–11:00): segredos e CI/CD com live deploy
 
 1. Zero credenciais: abrir `k8s/` (sem `secret.yaml`, sem senha), `appsettings.json` sem `SecretKey`, `.env.example`, `kong/kong.yml` com `${JWT_SECRET}`. Mostrar `kubectl get secrets -n fcg` (os Secrets existem no cluster, criados pelo `infra/azure-setup.sh` a partir do `.env`) e, no GitHub, que o único secret da pipeline é `AZURE_CREDENTIALS`.
-2. Explicar `.github/workflows/ci-cd.yml`: test → build com tag do commit → push ACR → `kubectl apply` → `rollout status`; `maxSurge: 1` / `maxUnavailable: 0` e `preStop` no `k8s/deployment.yaml`.
+2. Explicar `azure-pipelines.yml` (Azure DevOps): test → build com tag do commit → push ACR → `kubectl apply` → `rollout status`; `maxSurge: 1` / `maxUnavailable: 0` e `preStop` no `k8s/deployment.yaml`.
 3. **Live deploy:**
    - Em um terminal: `while true; do curl -s -o /dev/null -w "%{http_code} " -X POST http://$IP/api/Auth/login -H "content-type: application/json" -d '{}'; sleep 0.5; done`
    - Fazer a mudança visível no `fcg-users-api`, `git commit` e `git push` na `main`.
-   - Mostrar o Actions rodando: `test` verde, `deploy` com push e rollout.
+   - Mostrar a pipeline no Azure DevOps: stage de testes (aba Tests), imagem no ACR, stage de Deploy no environment `fcg-producao` com rollout.
    - Mostrar o loop sem `502/503/000` durante o rollout e `kubectl rollout history deployment/users-api -n fcg` com a nova revisão; conferir a mudança pelo IP.
 
 ## Bloco 3 — Yuri (11:00–18:00): busca avançada e cache
